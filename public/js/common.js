@@ -103,3 +103,15 @@ function showError(box, message) {
   box.textContent = message;
   box.hidden = !message;
 }
+
+// Issuance slip statuses have their own labels and colours.
+const SLIP_LABELS = { prepared: 'Prepared', released: 'Released', acknowledged: 'Received', cancelled: 'Cancelled' };
+const SLIP_CLASSES = {
+  prepared: 'text-bg-warning',
+  released: 'text-bg-info',
+  acknowledged: 'text-bg-success',
+  cancelled: 'text-bg-secondary',
+};
+function slipBadge(status) {
+  return h('span', { class: `badge ${SLIP_CLASSES[status] || 'text-bg-light'}` }, SLIP_LABELS[status] || status);
+}

@@ -4,16 +4,17 @@ const ROLE_SCREENS = {
     { label: 'Approve or return requisitions', href: '/requisitions.html' },
     { label: 'Approve purchase requisitions', href: null },
     { label: 'Item list', href: '/items.html' },
+    { label: 'Issuance slips', href: '/slips.html' },
     { label: 'Reports', href: null },
   ],
   foreman: [
     { label: 'File a requisition', href: '/rf-form.html' },
     { label: 'My requisitions', href: '/requisitions.html' },
-    { label: 'Confirm issued items', href: null },
+    { label: 'Confirm issued items', href: '/slips.html' },
   ],
   custodian: [
     { label: 'Item list and stock', href: '/items.html' },
-    { label: 'Release items on the issuance slip', href: null },
+    { label: 'Release items on the issuance slip', href: '/slips.html' },
     { label: 'Reorder points', href: '/items.html' },
   ],
   purchaser: [

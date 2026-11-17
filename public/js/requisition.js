@@ -26,19 +26,35 @@ function linesTable(rf) {
       h('thead', null, h('tr', null,
         h('th', null, 'Code'), h('th', null, 'Description'), h('th', null, 'Unit'), h('th', { class: 'num' }, 'Quantity'),
         showStock ? h('th', { class: 'num' }, 'Reserved') : null,
+        showStock ? h('th', { class: 'num' }, 'Issued') : null,
         showStock ? h('th', { class: 'num' }, 'Short') : null)),
       h('tbody', null, rf.lines.map((l) => h('tr', null,
         h('td', null, l.Code), h('td', null, l.Description), h('td', null, l.Unit), h('td', { class: 'num' }, qty(l.Quantity)),
         showStock ? h('td', { class: 'num' }, qty(l.QtyReserved)) : null,
+        showStock ? h('td', { class: 'num' }, qty(l.QtyIssued)) : null,
         showStock ? h('td', { class: 'num' }, Number(l.QtyShort) > 0 ? h('strong', { class: 'status-bad' }, qty(l.QtyShort)) : qty(l.QtyShort)) : null)))));
 }
 
 function stockNote(rf) {
   if (!STOCK_STATUSES.includes(rf.Status)) return null;
+  if (rf.Status === 'fulfilled') return h('p', { class: 'hint mt-2 mb-0' }, 'All items were issued. This requisition is closed.');
   const short = rf.lines.filter((l) => Number(l.QtyShort) > 0).length;
   return h('p', { class: 'hint mt-2 mb-0' }, short
     ? `${short} item${short > 1 ? 's are' : ' is'} short of stock. A purchase requisition is needed for the shortage.`
     : 'All items are reserved for this project.');
+}
+
+function slipsPanel(rf) {
+  if (!rf.slips || !rf.slips.length) return null;
+  return h('div', null,
+    h('h2', { class: 'h6 mt-4' }, 'Issuance slips'),
+    h('div', { class: 'panel table-responsive' },
+      h('table', { class: 'table mb-0' },
+        h('thead', null, h('tr', null, h('th', null, 'Slip'), h('th', null, 'Status'), h('th', null, 'Prepared'))),
+        h('tbody', null, rf.slips.map((sl) => h('tr', null,
+          h('td', null, h('a', { href: `/slip.html?id=${sl.SlipId}` }, sl.SlipNumber)),
+          h('td', null, slipBadge(sl.Status)),
+          h('td', null, sl.PreparedAt)))))));
 }
 
 function historyTable(rf) {
@@ -97,6 +113,7 @@ async function load() {
       h('div', { class: 'panel p-3' }, info(rf)),
       linesTable(rf),
       stockNote(rf),
+      slipsPanel(rf),
       actions(rf),
       historyTable(rf),
     ].filter(Boolean));

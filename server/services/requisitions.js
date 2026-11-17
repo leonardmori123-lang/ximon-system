@@ -6,6 +6,7 @@ const { HttpError } = require('./errors');
 const { STATUSES, validateRfInput, canRevise } = require('./rfRules');
 const { reserveForRequisition } = require('./reservation');
 const { createPurchaseRequisition } = require('./handoff');
+const { addDocHistory } = require('./history');
 
 const HEADER_SQL = `
   SELECT r.RequisitionId, r.RfNumber, r.ProjectId, p.Code AS ProjectCode, p.Name AS ProjectName,
@@ -58,20 +59,16 @@ async function getRequisition(user, id) {
      WHERE h.DocType = 'RF' AND h.DocId = @id ORDER BY h.HistoryId`,
     { id }
   );
+  rf.slips = await query(
+    `SELECT SlipId, SlipNumber, Status, CONVERT(varchar(16), PreparedAt, 120) AS PreparedAt
+     FROM dbo.IssuanceSlip WHERE RequisitionId = @id ORDER BY SlipId`,
+    { id }
+  );
   rf.canRevise = rf.RequestedBy === user.id && canRevise(rf);
   return rf;
 }
 
-async function addHistory(tx, id, from, to, userId, reason) {
-  await new sql.Request(tx)
-    .input('id', sql.Int, id)
-    .input('from', sql.NVarChar(30), from)
-    .input('to', sql.NVarChar(30), to)
-    .input('userId', sql.Int, userId)
-    .input('reason', sql.NVarChar(300), reason)
-    .query(`INSERT INTO dbo.StatusHistory (DocType, DocId, FromStatus, ToStatus, ChangedBy, Reason)
-            VALUES ('RF', @id, @from, @to, @userId, @reason)`);
-}
+const addHistory = (tx, id, from, to, userId, reason) => addDocHistory(tx, 'RF', id, from, to, userId, reason);
 
 // The project must be active and every item must still be active.
 async function checkProjectAndItems(tx, input) {
