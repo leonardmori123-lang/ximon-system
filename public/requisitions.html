@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Requisitions | Ximon</title>
+  <link href="/vendor/bootstrap/css/bootstrap.min.css" rel="stylesheet">
+  <link href="/css/app.css" rel="stylesheet">
+</head>
+<body>
+  <header id="topbar"></header>
+
+  <main class="container py-4 page-wide">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+      <h1 class="h5 mb-0" id="title">Requisitions</h1>
+      <div class="d-flex gap-2">
+        <select id="status" class="form-select" aria-label="Filter by status" style="width: 13rem;"></select>
+        <a id="new" class="btn btn-ximon text-nowrap" href="/rf-form.html" hidden>New requisition</a>
+      </div>
+    </div>
+
+    <div class="panel table-responsive">
+      <table class="table mb-0 align-middle">
+        <thead>
+          <tr><th>RF number</th><th>Project</th><th>Needed by</th><th>Urgency</th><th>Status</th><th>Requested by</th><th>Filed</th></tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <p id="empty" class="hint mt-3" hidden>No requisitions here.</p>
+    <p id="error" class="status-bad mt-3" role="alert" hidden></p>
+  </main>
+  <script src="/js/common.js"></script>
+  <script src="/js/requisitions.js"></script>
+</body>
+</html>

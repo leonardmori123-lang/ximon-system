@@ -22,8 +22,20 @@ app.use(express.static(path.join(__dirname, '..', 'public')));
 
 app.use('/api/health', require('./routes/health'));
 app.use('/api', require('./routes/auth'));
-// Module routes go here, one file per module, each checking the role first:
-//   app.use('/api/requisitions', require('./routes/requisitions'));
+// Module routes: one file per module, each checking the role first.
+app.use('/api/projects', require('./routes/projects'));
+app.use('/api/items', require('./routes/items'));
+app.use('/api/requisitions', require('./routes/requisitions'));
+
+// Turns a thrown HttpError (400, 403, 404, 409) into a JSON message. Anything else is a 500.
+app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err);
+  if (err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Bad request.' });
+  if (err.status && err.status < 500) return res.status(err.status).json({ error: err.message });
+  if (err.number === 2627 || err.number === 2601) return res.status(409).json({ error: 'That record already exists.' });
+  console.error(err);
+  res.status(500).json({ error: 'Server error. Please try again.' });
+});
 
 module.exports = app;
 

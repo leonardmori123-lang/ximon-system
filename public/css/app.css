@@ -25,3 +25,14 @@ a.screen-item { color: var(--ink); text-decoration: none; }
 a.screen-item:hover { background: var(--mist); }
 .status-ok { color: #1c6b3a; }
 .status-bad { color: var(--signal); }
+
+/* Pages after login */
+.page-wide { max-width: 72rem; }
+.page-mid { max-width: 52rem; }
+.info-grid { display: grid; grid-template-columns: 11rem 1fr; gap: .35rem 1rem; margin: 0; }
+.info-grid dt { color: var(--steel); font-weight: 500; }
+.info-grid dd { margin: 0; }
+.table > :not(caption) > * > * { padding: .6rem .75rem; }
+.table thead th { color: var(--steel); font-weight: 600; font-size: .875rem; border-bottom-color: var(--line); }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+.hint { color: var(--steel); font-size: .875rem; }

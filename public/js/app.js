@@ -1,27 +1,20 @@
-const ROLE_NAMES = {
-  owner: 'Owner or manager',
-  foreman: 'Foreman or project in charge',
-  custodian: 'Warehouse custodian',
-  purchaser: 'Purchaser',
-  verifier: 'Delivery verifier',
-};
-
 // Each screen a role may open. When a module builds a screen, set its href.
 const ROLE_SCREENS = {
   owner: [
-    { label: 'Approve or return requisitions', href: null },
+    { label: 'Approve or return requisitions', href: '/requisitions.html' },
     { label: 'Approve purchase requisitions', href: null },
+    { label: 'Item list', href: '/items.html' },
     { label: 'Reports', href: null },
   ],
   foreman: [
-    { label: 'File a requisition', href: null },
-    { label: 'My requisitions', href: null },
+    { label: 'File a requisition', href: '/rf-form.html' },
+    { label: 'My requisitions', href: '/requisitions.html' },
     { label: 'Confirm issued items', href: null },
   ],
   custodian: [
-    { label: 'Item list and stock', href: null },
+    { label: 'Item list and stock', href: '/items.html' },
     { label: 'Release items on the issuance slip', href: null },
-    { label: 'Reorder points', href: null },
+    { label: 'Reorder points', href: '/items.html' },
   ],
   purchaser: [
     { label: 'Suppliers', href: null },
@@ -36,35 +29,18 @@ const ROLE_SCREENS = {
 };
 
 function screenRow(screen) {
-  const row = document.createElement(screen.href ? 'a' : 'div');
-  row.className = 'screen-item';
-  if (screen.href) row.href = screen.href;
-  const label = document.createElement('span');
-  label.textContent = screen.label;
-  row.append(label);
-  if (!screen.href) {
-    const note = document.createElement('span');
-    note.className = 'note';
-    note.textContent = 'Not built yet';
-    row.append(note);
-  }
+  const row = h(screen.href ? 'a' : 'div', { class: 'screen-item', href: screen.href }, h('span', null, screen.label));
+  if (!screen.href) row.append(h('span', { class: 'note' }, 'Not built yet'));
   return row;
 }
 
 async function start() {
-  const me = await fetch('/api/me');
-  if (!me.ok) {
-    location.href = '/';
-    return;
-  }
-  const user = await me.json();
-  document.getElementById('who').textContent = `${user.fullName}, ${ROLE_NAMES[user.role] || user.role}`;
+  const user = await startPage();
   document.getElementById('screens').append(...(ROLE_SCREENS[user.role] || []).map(screenRow));
 
   const health = document.getElementById('health');
   try {
-    const res = await fetch('/api/health');
-    const data = await res.json();
+    const data = await fetch('/api/health').then((res) => res.json());
     health.textContent = data.ok ? `Database connected: ${data.database}` : `Database problem: ${data.error}`;
     health.className = `small mb-0 ${data.ok ? 'status-ok' : 'status-bad'}`;
   } catch {
@@ -72,10 +48,5 @@ async function start() {
     health.className = 'small mb-0 status-bad';
   }
 }
-
-document.getElementById('logout').addEventListener('click', async () => {
-  await fetch('/api/logout', { method: 'POST' });
-  location.href = '/';
-});
 
 start();

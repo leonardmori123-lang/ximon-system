@@ -8,23 +8,16 @@
   <link href="/css/app.css" rel="stylesheet">
 </head>
 <body>
-  <header class="brandbar">
-    <div class="container d-flex justify-content-between align-items-center py-2">
-      <div>
-        <strong>Ximon</strong>
-        <span id="who" class="muted ms-2 small"></span>
-      </div>
-      <button id="logout" class="btn btn-sm btn-outline-light" type="button">Log out</button>
-    </div>
-  </header>
+  <header id="topbar"></header>
 
-  <main class="container py-4" style="max-width: 40rem;">
+  <main class="container py-4 page-mid">
     <h1 class="h5">Your screens</h1>
     <div id="screens" class="panel mb-4"></div>
 
     <h2 class="h6">System check</h2>
     <p id="health" class="small mb-0">Checking the database...</p>
   </main>
+  <script src="/js/common.js"></script>
   <script src="/js/app.js"></script>
 </body>
 </html>

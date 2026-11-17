@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Item list | Ximon</title>
+  <link href="/vendor/bootstrap/css/bootstrap.min.css" rel="stylesheet">
+  <link href="/css/app.css" rel="stylesheet">
+</head>
+<body>
+  <header id="topbar"></header>
+
+  <main class="container py-4 page-wide">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+      <h1 class="h5 mb-0">Item list</h1>
+      <div class="d-flex gap-2">
+        <input id="search" class="form-control" type="search" placeholder="Search code, description or location" aria-label="Search items" style="width: 20rem;">
+        <button id="add" class="btn btn-ximon text-nowrap" type="button" hidden>Add item</button>
+      </div>
+    </div>
+
+    <div class="panel table-responsive">
+      <table class="table mb-0 align-middle">
+        <thead>
+          <tr>
+            <th>Code</th><th>Description</th><th>Unit</th><th>Location</th>
+            <th class="num">On hand</th><th class="num">Reserved</th><th class="num">Available</th>
+            <th class="num">Reorder point</th><th class="num">Lead time (days)</th><th></th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <p id="empty" class="hint mt-3" hidden>No items match.</p>
+    <p class="hint mt-3 mb-0">On hand and reserved quantities change only through stock transactions (receiving and issuing), never by editing here.</p>
+  </main>
+
+  <div class="modal fade" id="item-modal" tabindex="-1" aria-labelledby="modal-title" aria-hidden="true">
+    <div class="modal-dialog">
+      <form class="modal-content" id="item-form" novalidate>
+        <div class="modal-header">
+          <h2 class="modal-title h6" id="modal-title">Item</h2>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label" for="f-code">Code</label>
+            <input id="f-code" class="form-control" maxlength="30" placeholder="HDPE-007" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label" for="f-description">Description</label>
+            <input id="f-description" class="form-control" maxlength="200" required>
+          </div>
+          <div class="row g-3 mb-3">
+            <div class="col-6">
+              <label class="form-label" for="f-unit">Unit</label>
+              <input id="f-unit" class="form-control" maxlength="20" placeholder="pc, m, kg" required>
+            </div>
+            <div class="col-6">
+              <label class="form-label" for="f-location">Location</label>
+              <input id="f-location" class="form-control" maxlength="60">
+            </div>
+            <div class="col-6">
+              <label class="form-label" for="f-reorder">Reorder point</label>
+              <input id="f-reorder" class="form-control" type="number" min="0" step="any" value="0">
+            </div>
+            <div class="col-6">
+              <label class="form-label" for="f-lead">Supplier lead time (days)</label>
+              <input id="f-lead" class="form-control" type="number" min="0" step="1" value="0">
+            </div>
+          </div>
+          <div class="form-check mb-2">
+            <input id="f-tool" class="form-check-input" type="checkbox">
+            <label class="form-check-label" for="f-tool">This is a tool, not a consumable</label>
+          </div>
+          <div class="form-check" id="active-wrap">
+            <input id="f-active" class="form-check-input" type="checkbox" checked>
+            <label class="form-check-label" for="f-active">Active (can be requested)</label>
+          </div>
+          <p id="form-error" class="status-bad small mt-3 mb-0" role="alert" hidden></p>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-ximon">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="/vendor/bootstrap/js/bootstrap.bundle.min.js"></script>
+  <script src="/js/common.js"></script>
+  <script src="/js/items.js"></script>
+</body>
+</html>
