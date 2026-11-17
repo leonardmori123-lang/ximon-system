@@ -1,0 +1,27 @@
+:root {
+  --ink: #1d2b33;
+  --steel: #46606f;
+  --mist: #edf1f3;
+  --line: #cfd8dd;
+  --signal: #b8322a;
+  --signal-dark: #962720;
+}
+body {
+  background: var(--mist);
+  color: var(--ink);
+  font-family: "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+  line-height: 1.5;
+}
+.brandbar { background: var(--ink); color: #fff; }
+.brandbar .muted { color: #b9c6cd; }
+.panel { background: #fff; border: 1px solid var(--line); border-radius: 6px; }
+.btn-ximon { background: var(--signal); border-color: var(--signal); color: #fff; }
+.btn-ximon:hover, .btn-ximon:focus-visible { background: var(--signal-dark); border-color: var(--signal-dark); color: #fff; }
+.form-control:focus { border-color: var(--steel); box-shadow: 0 0 0 .2rem rgba(70, 96, 111, .25); }
+.screen-item { display: flex; justify-content: space-between; gap: 1rem; padding: .75rem 1rem; border-bottom: 1px solid var(--line); }
+.screen-item:last-child { border-bottom: 0; }
+.screen-item .note { color: var(--steel); font-size: .875rem; }
+a.screen-item { color: var(--ink); text-decoration: none; }
+a.screen-item:hover { background: var(--mist); }
+.status-ok { color: #1c6b3a; }
+.status-bad { color: var(--signal); }

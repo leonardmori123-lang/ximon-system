@@ -1,0 +1,42 @@
+require('dotenv').config({ quiet: true });
+const os = require('os');
+const path = require('path');
+const express = require('express');
+const session = require('express-session');
+
+const app = express();
+
+app.use(express.json());
+app.use(
+  session({
+    secret: process.env.SESSION_SECRET || 'dev-only-secret-change-me',
+    resave: false,
+    saveUninitialized: false,
+    cookie: { httpOnly: true, sameSite: 'lax', maxAge: 8 * 60 * 60 * 1000 },
+  })
+);
+
+// Bootstrap is served from node_modules so the app works without internet at the demo.
+app.use('/vendor/bootstrap', express.static(path.join(__dirname, '..', 'node_modules', 'bootstrap', 'dist')));
+app.use(express.static(path.join(__dirname, '..', 'public')));
+
+app.use('/api/health', require('./routes/health'));
+app.use('/api', require('./routes/auth'));
+// Module routes go here, one file per module, each checking the role first:
+//   app.use('/api/requisitions', require('./routes/requisitions'));
+
+module.exports = app;
+
+if (require.main === module) {
+  const port = Number(process.env.PORT || 3000);
+  app.listen(port, '0.0.0.0', () => {
+    console.log(`Ximon system running on http://localhost:${port}`);
+    for (const list of Object.values(os.networkInterfaces())) {
+      for (const net of list || []) {
+        if (net.family === 'IPv4' && !net.internal) {
+          console.log(`Open on a phone (same Wi-Fi): http://${net.address}:${port}`);
+        }
+      }
+    }
+  });
+}

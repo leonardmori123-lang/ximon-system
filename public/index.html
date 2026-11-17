@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Log in | Ximon Engineering Services</title>
+  <link href="/vendor/bootstrap/css/bootstrap.min.css" rel="stylesheet">
+  <link href="/css/app.css" rel="stylesheet">
+</head>
+<body>
+  <main class="container py-5" style="max-width: 26rem;">
+    <h1 class="h4 mb-1">Ximon Engineering Services</h1>
+    <p class="mb-4" style="color: var(--steel);">Requisition, inventory, purchasing and delivery.</p>
+
+    <form id="login-form" class="panel p-4" novalidate>
+      <div class="mb-3">
+        <label for="username" class="form-label">Username</label>
+        <input id="username" class="form-control" autocomplete="username" autocapitalize="none" required>
+      </div>
+      <div class="mb-3">
+        <label for="password" class="form-label">Password</label>
+        <input id="password" type="password" class="form-control" autocomplete="current-password" required>
+      </div>
+      <p id="error" class="status-bad small mb-3" role="alert" hidden></p>
+      <button class="btn btn-ximon w-100" type="submit">Log in</button>
+    </form>
+  </main>
+  <script src="/js/login.js"></script>
+</body>
+</html>
