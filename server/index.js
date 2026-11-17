@@ -3,6 +3,7 @@ const os = require('os');
 const path = require('path');
 const express = require('express');
 const session = require('express-session');
+const db = require('./db');
 
 const app = express();
 
@@ -33,7 +34,7 @@ app.use((err, req, res, next) => {
   if (res.headersSent) return next(err);
   if (err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Bad request.' });
   if (err.status && err.status < 500) return res.status(err.status).json({ error: err.message });
-  if (err.number === 2627 || err.number === 2601) return res.status(409).json({ error: 'That record already exists.' });
+  if (db.isUniqueError(err)) return res.status(409).json({ error: 'That record already exists.' });
   console.error(err);
   res.status(500).json({ error: 'Server error. Please try again.' });
 });

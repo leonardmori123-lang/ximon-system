@@ -1,138 +1,132 @@
-// Runs the issuance service against a small in-memory fake database.
+// Release side: slip, release, confirm. Real database, real SQL.
 const test = require('node:test');
 const assert = require('node:assert');
+const { db, user, item, itemId, rfBody } = require('./helpers');
+const rf = require('../server/services/requisitions');
+const slips = require('../server/services/issuance');
 
-let db;
-function reset() {
-  db = {
-    items: { 1: { OnHand: 10, Reserved: 3 }, 2: { OnHand: 0, Reserved: 0 } },
-    rf: { 1: { Status: 'approved', RequestedBy: 2, ProjectId: 1 } },
-    rfLines: [
-      { LineId: 1, RequisitionId: 1, ItemId: 1, Quantity: 3, QtyReserved: 3, QtyIssued: 0 },
-      { LineId: 2, RequisitionId: 1, ItemId: 2, Quantity: 1, QtyReserved: 0, QtyIssued: 0 },
-    ],
-    slips: { 1: { Status: 'released', RequisitionId: 1, ReleasedBy: 3, SlipNumber: 'IS-2026-0001' } },
-    slipLines: [{ SlipId: 1, RequisitionLineId: 1, ItemId: 1, Quantity: 3 }],
-    insertedSlipLines: [], txns: [], history: [], openSlips: [], nextSlipId: 7,
-  };
+const foreman = user('foreman1');
+const owner = user('owner1');
+const custodian = user('custodian1');
+const rejects = (fn, status, text) => assert.throws(fn, (e) => e.status === status && (!text || e.message.includes(text)));
+const rfRow = (id) => rf.getRequisition(owner, id);
+const approved = (lines) => { const { id } = rf.createRequisition(foreman, rfBody(lines)); rf.approveRequisition(owner, id); return id; };
+
+// The stock log must always add up to what is on the shelf.
+// Always ROUND a SUM of decimals: 0.3 - 0.1 - 0.2 is -2.7e-17 in floating point, not 0. (+ 0 turns -0 into 0.)
+function assertLogMatchesStock() {
+  const rows = db.all(`SELECT i.Code, i.OnHand, ROUND(COALESCE(SUM(t.Quantity), 0), 2) AS Logged
+                       FROM Item i LEFT JOIN StockTransaction t ON t.ItemId = i.ItemId GROUP BY i.ItemId`);
+  for (const r of rows) assert.strictEqual(r.Logged + 0, r.OnHand, `${r.Code}: log ${r.Logged} vs on hand ${r.OnHand}`);
 }
-reset();
 
-class FakeRequest {
-  constructor() { this.p = {}; }
-  input(name, type, value) { this.p[name] = value === undefined ? type : value; return this; }
-  async query(raw) {
-    const t = raw.replace(/\s+/g, ' ').trim();
-    const p = this.p;
-    if (t.includes('FROM dbo.IssuanceSlip s WITH (UPDLOCK')) {
-      const s = db.slips[p.id]; if (!s) return { recordset: [] };
-      const r = db.rf[s.RequisitionId];
-      return { recordset: [{ ...s, RequestedBy: r.RequestedBy, ProjectId: r.ProjectId }] };
-    }
-    if (t.startsWith('UPDATE dbo.IssuanceSlip SET Status = \'acknowledged\'')) { db.slips[p.id].Status = 'acknowledged'; return { rowsAffected: [1] }; }
-    if (t.includes('FROM dbo.IssuanceLine WHERE SlipId')) {
-      return { recordset: db.slipLines.filter((l) => l.SlipId === p.id).sort((a, b) => a.ItemId - b.ItemId) };
-    }
-    if (t.startsWith('UPDATE dbo.Item SET OnHand')) {
-      const it = db.items[p.itemId];
-      if (it.Reserved >= p.qty && it.OnHand >= p.qty) { it.OnHand -= p.qty; it.Reserved -= p.qty; return { rowsAffected: [1] }; }
-      return { rowsAffected: [0] };
-    }
-    if (t.startsWith('UPDATE dbo.RequisitionLine SET QtyIssued')) {
-      const l = db.rfLines.find((x) => x.LineId === p.lineId);
-      if (l.QtyIssued + p.qty <= l.QtyReserved) { l.QtyIssued += p.qty; return { rowsAffected: [1] }; }
-      return { rowsAffected: [0] };
-    }
-    if (t.startsWith('INSERT INTO dbo.StockTransaction')) { db.txns.push({ ...p }); return { rowsAffected: [1] }; }
-    if (t.includes('COUNT(*) AS Remaining')) {
-      return { recordset: [{ Remaining: db.rfLines.filter((l) => l.RequisitionId === p.rid && l.QtyIssued < l.Quantity).length }] };
-    }
-    if (t.startsWith('SELECT Status FROM dbo.Requisition WITH (UPDLOCK')) {
-      return { recordset: db.rf[p.rid || p.id] ? [{ Status: db.rf[p.rid || p.id].Status }] : [] };
-    }
-    if (t.startsWith('UPDATE dbo.Requisition SET Status = @status')) { db.rf[p.rid].Status = p.status; return { rowsAffected: [1] }; }
-    if (t.startsWith('INSERT INTO dbo.StatusHistory')) { db.history.push({ ...p }); return { rowsAffected: [1] }; }
-    // prepareSlip
-    if (t.startsWith('SELECT SlipNumber FROM dbo.IssuanceSlip WHERE RequisitionId')) return { recordset: db.openSlips };
-    if (t.includes('QtyReserved - QtyIssued AS Qty')) {
-      return { recordset: db.rfLines.filter((l) => l.RequisitionId === p.id && l.QtyReserved - l.QtyIssued > 0)
-        .map((l) => ({ LineId: l.LineId, ItemId: l.ItemId, Qty: l.QtyReserved - l.QtyIssued })) };
-    }
-    if (t.includes('NumberSequence')) return { recordset: [{ n: 1 }] };
-    if (t.startsWith('INSERT INTO dbo.IssuanceSlip')) return { recordset: [{ SlipId: db.nextSlipId }] };
-    if (t.startsWith('INSERT INTO dbo.IssuanceLine')) { db.insertedSlipLines.push({ ...p }); return { rowsAffected: [1] }; }
-    throw new Error('unexpected query: ' + t);
+test('full story: prepare, release, confirm. Stock leaves, RF closes, the log adds up', () => {
+  const id = approved([['HDPE-001', 3]]);
+  assert.ok(slips.listReleasable().some((r) => r.RequisitionId === id));
+
+  const { id: slipId, slipNumber } = slips.prepareSlip(custodian, id);
+  assert.match(slipNumber, /^IS-\d{4}-\d{4}$/);
+  assert.ok(!slips.listReleasable().some((r) => r.RequisitionId === id), 'an RF with an open slip is not offered again');
+
+  slips.releaseSlip(custodian, slipId);
+  assert.deepStrictEqual(item('HDPE-001'), { OnHand: 10, Reserved: 3 }); // nothing deducted at release
+  const out = slips.acknowledgeSlip(foreman, slipId, ' all good ');
+
+  assert.deepStrictEqual({ ...out }, { id: slipId, status: 'acknowledged', requisitionStatus: 'fulfilled' });
+  assert.deepStrictEqual(item('HDPE-001'), { OnHand: 7, Reserved: 0 });
+  const full = rfRow(id);
+  assert.strictEqual(full.Status, 'fulfilled');
+  assert.strictEqual(full.lines[0].QtyIssued, 3);
+  assert.deepStrictEqual(full.history.map((h) => h.ToStatus), ['pending', 'approved', 'fulfilled']);
+  const slip = slips.getSlip(foreman, slipId);
+  assert.strictEqual(slip.Status, 'acknowledged');
+  assert.strictEqual(slip.Remarks, 'all good');
+  assert.deepStrictEqual(slip.history.map((h) => h.ToStatus), ['prepared', 'released', 'acknowledged']);
+  const tx = db.get(`SELECT Quantity, TxType, CreatedBy FROM StockTransaction WHERE RefDocType = 'IS' AND RefDocId = @slipId`, { slipId });
+  assert.deepStrictEqual({ ...tx }, { Quantity: -3, TxType: 'issue', CreatedBy: custodian.id });
+  assertLogMatchesStock();
+});
+
+test('an RF with a shortage becomes partly fulfilled, and stays open', () => {
+  // HDPE-001 has 7 on hand now; ask for 9 -> 7 reserved, 2 short
+  const id = approved([['HDPE-001', 9]]);
+  const { id: slipId } = slips.prepareSlip(custodian, id);
+  assert.strictEqual(slips.getSlip(custodian, slipId).lines[0].Quantity, 7);
+  slips.releaseSlip(custodian, slipId);
+  assert.strictEqual(slips.acknowledgeSlip(foreman, slipId).requisitionStatus, 'partly_fulfilled');
+  assert.deepStrictEqual(item('HDPE-001'), { OnHand: 0, Reserved: 0 });
+  assert.strictEqual(rfRow(id).Status, 'partly_fulfilled');
+  rejects(() => slips.prepareSlip(custodian, id), 409, 'Nothing is reserved'); // nothing left to release
+  assertLogMatchesStock();
+});
+
+test('guards: wrong status, wrong person, double confirm, open slip', () => {
+  const pending = rf.createRequisition(foreman, rfBody([['HDPE-002', 1]])).id;
+  rejects(() => slips.prepareSlip(custodian, pending), 409, 'approved');
+  rejects(() => slips.prepareSlip(custodian, 9999), 404);
+
+  rf.approveRequisition(owner, pending); // 0 on hand -> all short
+  rejects(() => slips.prepareSlip(custodian, pending), 409, 'Nothing is reserved');
+
+  const id = approved([['HDPE-004', 1]]); // also 0 on hand
+  assert.ok(id);
+});
+
+test('release and confirm only in the right order, by the right person', () => {
+  db.run(`UPDATE Item SET OnHand = 5 WHERE Code = 'HDPE-005'`); // give it stock for this test
+  db.run(`INSERT INTO StockTransaction (ItemId, TxType, Quantity, CreatedBy) VALUES (@itemId, 'adjustment', 5, @userId)`, { itemId: itemId('HDPE-005'), userId: owner.id });
+  const id = approved([['HDPE-005', 2]]);
+  const { id: slipId } = slips.prepareSlip(custodian, id);
+
+  rejects(() => slips.prepareSlip(custodian, id), 409, 'still open');
+  rejects(() => slips.acknowledgeSlip(foreman, slipId), 409, 'not waiting'); // not released yet
+  slips.releaseSlip(custodian, slipId);
+  rejects(() => slips.releaseSlip(custodian, slipId), 409);
+  rejects(() => slips.cancelSlip(custodian, slipId), 409); // too late to cancel
+  rejects(() => slips.acknowledgeSlip({ id: owner.id, role: 'foreman' }, slipId), 403);
+  rejects(() => slips.acknowledgeSlip(foreman, slipId, 'x'.repeat(201)), 400);
+  slips.acknowledgeSlip(foreman, slipId);
+  rejects(() => slips.acknowledgeSlip(foreman, slipId), 409); // a second tap does nothing
+  assert.deepStrictEqual(item('HDPE-005'), { OnHand: 3, Reserved: 0 });
+  assertLogMatchesStock();
+});
+
+test('a cancelled slip frees the RF for a new slip', () => {
+  db.run(`UPDATE Item SET OnHand = 4 WHERE Code = 'HDPE-006'`);
+  db.run(`INSERT INTO StockTransaction (ItemId, TxType, Quantity, CreatedBy) VALUES (@itemId, 'adjustment', 4, @userId)`, { itemId: itemId('HDPE-006'), userId: owner.id });
+  const id = approved([['HDPE-006', 1]]);
+  const first = slips.prepareSlip(custodian, id);
+  slips.cancelSlip(custodian, first.id);
+  const second = slips.prepareSlip(custodian, id);
+  assert.notStrictEqual(second.id, first.id);
+  assert.strictEqual(slips.getSlip(custodian, first.id).Status, 'cancelled');
+  assert.deepStrictEqual(item('HDPE-006'), { OnHand: 4, Reserved: 1 }); // still reserved
+});
+
+test('a stock record that does not match the slip is refused and nothing moves', () => {
+  db.run(`UPDATE Item SET OnHand = 5 WHERE Code = 'HDPE-003'`);
+  db.run(`INSERT INTO StockTransaction (ItemId, TxType, Quantity, CreatedBy) VALUES (@itemId, 'adjustment', 5, @userId)`, { itemId: itemId('HDPE-003'), userId: owner.id });
+  const id = approved([['HDPE-003', 2]]);
+  const { id: slipId } = slips.prepareSlip(custodian, id);
+  slips.releaseSlip(custodian, slipId);
+  db.run(`UPDATE Item SET Reserved = 0 WHERE Code = 'HDPE-003'`); // someone corrupted the reservation
+  rejects(() => slips.acknowledgeSlip(foreman, slipId), 409, 'does not match');
+  assert.strictEqual(slips.getSlip(custodian, slipId).Status, 'released'); // rolled back
+  assert.deepStrictEqual(item('HDPE-003'), { OnHand: 5, Reserved: 0 });
+});
+
+test('decimal quantities do not drift (0.1 + 0.2 style)', () => {
+  db.run(`INSERT INTO Item (Code, Description, Unit, OnHand) VALUES ('PIPE-1', 'Test pipe', 'm', 0.3)`);
+  db.run(`INSERT INTO StockTransaction (ItemId, TxType, Quantity, CreatedBy) VALUES (@itemId, 'adjustment', 0.3, @userId)`, { itemId: itemId('PIPE-1'), userId: owner.id });
+  const a = approved([['PIPE-1', 0.1]]);
+  const b = approved([['PIPE-1', 0.2]]);
+  assert.deepStrictEqual(item('PIPE-1'), { OnHand: 0.3, Reserved: 0.3 });
+  for (const id of [a, b]) {
+    const s = slips.prepareSlip(custodian, id);
+    slips.releaseSlip(custodian, s.id);
+    slips.acknowledgeSlip(foreman, s.id);
+    assert.strictEqual(rfRow(id).Status, 'fulfilled');
   }
-}
-const dbPath = require.resolve('../server/db');
-require.cache[dbPath] = {
-  id: dbPath, filename: dbPath, loaded: true,
-  exports: {
-    sql: { Request: FakeRequest, Int: 'Int', Decimal: () => 'Decimal', NVarChar: () => 'NVarChar', VarChar: () => 'VarChar' },
-    query: async () => [], withTransaction: async (fn) => fn({}),
-  },
-};
-const { acknowledgeSlip, prepareSlip } = require('../server/services/issuance');
-const foreman = { id: 2, role: 'foreman' };
-const custodian = { id: 3, role: 'custodian' };
-const rejects = (promise, status, text) =>
-  assert.rejects(promise, (err) => err.status === status && (!text || err.message.includes(text)));
-
-test('confirming receipt deducts stock, logs it, and marks the RF partly fulfilled when an item is still short', async () => {
-  reset();
-  const result = await acknowledgeSlip(foreman, 1, ' all good ');
-  assert.deepStrictEqual(result, { id: 1, status: 'acknowledged', requisitionStatus: 'partly_fulfilled' });
-  assert.deepStrictEqual(db.items[1], { OnHand: 7, Reserved: 0 });
-  assert.strictEqual(db.rfLines[0].QtyIssued, 3);
-  assert.deepStrictEqual(db.txns.map((x) => [x.itemId, x.qty, x.userId, x.note]), [[1, -3, 3, 'IS-2026-0001']]);
-  assert.strictEqual(db.rf[1].Status, 'partly_fulfilled');
-  assert.deepStrictEqual(db.history.map((h) => `${h.docType} ${h.from}>${h.to}`), ['RF approved>partly_fulfilled', 'IS released>acknowledged']);
-  assert.strictEqual(db.history[1].reason, 'all good');
-});
-
-test('when every line is fully issued the RF is closed as fulfilled', async () => {
-  reset();
-  db.rfLines.pop(); // only the HDPE line
-  const result = await acknowledgeSlip(foreman, 1);
-  assert.strictEqual(result.requisitionStatus, 'fulfilled');
-  assert.strictEqual(db.rf[1].Status, 'fulfilled');
-});
-
-test('only the requestor can confirm, and only a released slip', async () => {
-  reset();
-  await rejects(acknowledgeSlip({ id: 9, role: 'foreman' }, 1), 403);
-  db.slips[1].Status = 'prepared';
-  await rejects(acknowledgeSlip(foreman, 1), 409, 'not waiting');
-  await rejects(acknowledgeSlip(foreman, 99), 404);
-  assert.deepStrictEqual(db.items[1], { OnHand: 10, Reserved: 3 }); // nothing moved
-});
-
-test('a stock record that does not match the slip is refused', async () => {
-  reset();
-  db.items[1].Reserved = 1; // slip says 3 but only 1 is reserved
-  await rejects(acknowledgeSlip(foreman, 1), 409, 'does not match');
-});
-
-test('remarks longer than 200 characters are refused', async () => {
-  reset();
-  await rejects(acknowledgeSlip(foreman, 1, 'x'.repeat(201)), 400);
-});
-
-test('prepare slip takes what is reserved and not yet issued', async () => {
-  reset();
-  const out = await prepareSlip(custodian, 1);
-  assert.deepStrictEqual(out, { id: 7, slipNumber: 'IS-2026-0001' });
-  assert.deepStrictEqual(db.insertedSlipLines.map((l) => [l.lineId, l.itemId, l.qty]), [[1, 1, 3]]);
-  assert.strictEqual(db.history[0].to, 'prepared');
-});
-
-test('prepare slip is refused for a wrong status, an open slip, or nothing reserved', async () => {
-  reset(); db.rf[1].Status = 'pending';
-  await rejects(prepareSlip(custodian, 1), 409, 'approved');
-  reset(); db.openSlips = [{ SlipNumber: 'IS-2026-0005' }];
-  await rejects(prepareSlip(custodian, 1), 409, 'IS-2026-0005');
-  reset(); db.rfLines[0].QtyIssued = 3;
-  await rejects(prepareSlip(custodian, 1), 409, 'Nothing is reserved');
-  reset();
-  await rejects(prepareSlip(custodian, 5), 404);
+  assert.deepStrictEqual(item('PIPE-1'), { OnHand: 0, Reserved: 0 });
+  assertLogMatchesStock();
 });

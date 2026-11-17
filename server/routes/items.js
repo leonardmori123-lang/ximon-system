@@ -13,17 +13,17 @@ function idParam(req) {
 }
 
 // Everyone logged in can read the list. Editors also see inactive items with ?all=1.
-router.get('/', requireLogin, async (req, res) => {
+router.get('/', requireLogin, (req, res) => {
   const includeInactive = req.query.all === '1' && EDITORS.includes(req.session.user.role);
-  res.json(await listItems({ includeInactive }));
+  res.json(listItems({ includeInactive }));
 });
 
-router.post('/', requireRole(...EDITORS), async (req, res) => {
-  res.status(201).json(await createItem(req.body));
+router.post('/', requireRole(...EDITORS), (req, res) => {
+  res.status(201).json(createItem(req.body));
 });
 
-router.put('/:id', requireRole(...EDITORS), async (req, res) => {
-  res.json(await updateItem(idParam(req), req.body));
+router.put('/:id', requireRole(...EDITORS), (req, res) => {
+  res.json(updateItem(idParam(req), req.body));
 });
 
 module.exports = router;

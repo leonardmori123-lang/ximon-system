@@ -2,37 +2,28 @@
 //   Yes: reserve the requested quantity for the project.
 //   No:  reserve what is available and record the shortage.
 // Runs inside the approval transaction, so approval and reservation succeed or fail together.
-const { sql } = require('../db');
+const db = require('../db');
 const { planReservation } = require('./stockRules');
 
 // Returns the shortages: [{ itemId, shortQty }]. Empty when everything was reserved.
-async function reserveForRequisition(tx, requisitionId) {
-  const lines = (
-    await new sql.Request(tx)
-      .input('id', sql.Int, requisitionId)
-      // Items are always handled in the same order, so two approvals can never lock each other.
-      .query('SELECT LineId, ItemId, Quantity FROM dbo.RequisitionLine WHERE RequisitionId = @id ORDER BY ItemId')
-  ).recordset;
+function reserveForRequisition(requisitionId) {
+  // Items are always handled in the same order. SQLite also lets only one write run at a time,
+  // so two approvals can never reserve the same units.
+  const lines = db.all(
+    'SELECT LineId, ItemId, Quantity FROM RequisitionLine WHERE RequisitionId = @requisitionId ORDER BY ItemId',
+    { requisitionId }
+  );
 
   const shortages = [];
   for (const line of lines) {
-    // UPDLOCK holds this item until the transaction ends, so two approvals cannot reserve the same units.
-    const stock = await new sql.Request(tx)
-      .input('itemId', sql.Int, line.ItemId)
-      .query('SELECT OnHand - Reserved AS Available FROM dbo.Item WITH (UPDLOCK, ROWLOCK) WHERE ItemId = @itemId');
-    const { reserve, short } = planReservation(line.Quantity, stock.recordset[0].Available);
+    const stock = db.get('SELECT ROUND(OnHand - Reserved, 2) AS Available FROM Item WHERE ItemId = @itemId', { itemId: line.ItemId });
+    const { reserve, short } = planReservation(line.Quantity, stock.Available);
 
     if (reserve > 0) {
-      await new sql.Request(tx)
-        .input('itemId', sql.Int, line.ItemId)
-        .input('reserve', sql.Decimal(12, 2), reserve)
-        .query('UPDATE dbo.Item SET Reserved = Reserved + @reserve WHERE ItemId = @itemId');
+      db.run('UPDATE Item SET Reserved = ROUND(Reserved + @reserve, 2) WHERE ItemId = @itemId', { reserve, itemId: line.ItemId });
     }
-    await new sql.Request(tx)
-      .input('lineId', sql.Int, line.LineId)
-      .input('reserve', sql.Decimal(12, 2), reserve)
-      .input('short', sql.Decimal(12, 2), short)
-      .query('UPDATE dbo.RequisitionLine SET QtyReserved = @reserve, QtyShort = @short WHERE LineId = @lineId');
+    db.run('UPDATE RequisitionLine SET QtyReserved = @reserve, QtyShort = @short WHERE LineId = @lineId',
+      { reserve, short, lineId: line.LineId });
     if (short > 0) shortages.push({ itemId: line.ItemId, shortQty: short });
   }
   return shortages;

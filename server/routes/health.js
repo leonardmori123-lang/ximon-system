@@ -1,13 +1,13 @@
-// Open /api/health in the browser to prove Node can reach SQL Server.
+// Open /api/health in the browser to prove the server can read the database.
 const express = require('express');
-const { query } = require('../db');
+const db = require('../db');
 
 const router = express.Router();
 
-router.get('/', async (req, res) => {
+router.get('/', (req, res) => {
   try {
-    const rows = await query('SELECT DB_NAME() AS db, SYSDATETIME() AS now');
-    res.json({ ok: true, database: rows[0].db, time: rows[0].now });
+    const users = db.get('SELECT COUNT(*) AS n FROM AppUser').n;
+    res.json({ ok: true, database: 'SQLite (ximon.db)', users });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }

@@ -1,50 +1,10 @@
-// Role protection and input checks on the real routes, with the database replaced by a fake.
+// Who may do what, and what happens with bad input.
 const test = require('node:test');
 const assert = require('node:assert');
-const bcrypt = require('bcryptjs');
+const { start, stop, call, callRaw, loginAs } = require('./helpers');
 
-const dbPath = require.resolve('../server/db');
-const hash = bcrypt.hashSync('secret123', 4);
-const USERS = {
-  owner1: { UserId: 1, FullName: 'Owner', Role: 'owner' },
-  foreman1: { UserId: 2, FullName: 'Foreman', Role: 'foreman' },
-  custodian1: { UserId: 3, FullName: 'Custodian', Role: 'custodian' },
-  purchaser1: { UserId: 4, FullName: 'Purchaser', Role: 'purchaser' },
-};
-require.cache[dbPath] = {
-  id: dbPath, filename: dbPath, loaded: true,
-  exports: {
-    sql: {}, makeConfig: () => ({}),
-    withTransaction: async () => { throw new Error('database should not be reached in these tests'); },
-    query: async (text, params) => {
-      if (text.includes('FROM AppUser') && USERS[params.username]) return [{ ...USERS[params.username], PasswordHash: hash }];
-      return [];
-    },
-  },
-};
-const app = require('../server/index');
-
-let server, base;
-test.before(async () => {
-  await new Promise((resolve) => { server = app.listen(0, resolve); });
-  base = `http://localhost:${server.address().port}`;
-});
-test.after(() => server.close());
-
-async function loginAs(username) {
-  const res = await fetch(base + '/api/login', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password: 'secret123' }),
-  });
-  assert.strictEqual(res.status, 200);
-  return res.headers.get('set-cookie').split(';')[0];
-}
-const call = (method, url, cookie, body) =>
-  fetch(base + url, {
-    method,
-    headers: { 'Content-Type': 'application/json', ...(cookie && { Cookie: cookie }) },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+test.before(start);
+test.after(stop);
 
 test('nobody logged in gets 401 on every module route', async () => {
   for (const [method, url] of [['GET', '/api/items'], ['POST', '/api/items'], ['GET', '/api/requisitions'],
@@ -54,11 +14,11 @@ test('nobody logged in gets 401 on every module route', async () => {
 });
 
 test('only the owner can approve or return a requisition', async () => {
-  const foreman = await loginAs('foreman1');
-  assert.strictEqual((await call('POST', '/api/requisitions/1/approve', foreman)).status, 403);
-  assert.strictEqual((await call('POST', '/api/requisitions/1/return', foreman, { reason: 'x' })).status, 403);
-  const purchaser = await loginAs('purchaser1');
-  assert.strictEqual((await call('POST', '/api/requisitions/1/approve', purchaser)).status, 403);
+  for (const who of ['foreman1', 'purchaser1', 'custodian1']) {
+    const c = await loginAs(who);
+    assert.strictEqual((await call('POST', '/api/requisitions/1/approve', c)).status, 403, who);
+    assert.strictEqual((await call('POST', '/api/requisitions/1/return', c, { reason: 'x' })).status, 403, who);
+  }
 });
 
 test('only the foreman can file, revise or cancel a requisition', async () => {
@@ -69,36 +29,45 @@ test('only the foreman can file, revise or cancel a requisition', async () => {
 });
 
 test('purchaser cannot read requisitions yet', async () => {
-  const purchaser = await loginAs('purchaser1');
-  assert.strictEqual((await call('GET', '/api/requisitions', purchaser)).status, 403);
+  assert.strictEqual((await call('GET', '/api/requisitions', await loginAs('purchaser1'))).status, 403);
 });
 
 test('only owner and custodian can add or edit items', async () => {
   const foreman = await loginAs('foreman1');
   assert.strictEqual((await call('POST', '/api/items', foreman, {})).status, 403);
   assert.strictEqual((await call('PUT', '/api/items/1', foreman, {})).status, 403);
-  const custodian = await loginAs('custodian1');
-  const res = await call('POST', '/api/items', custodian, {});
-  assert.strictEqual(res.status, 400); // allowed in, then refused for the empty form
+  const res = await call('POST', '/api/items', await loginAs('custodian1'), {});
+  assert.strictEqual(res.status, 400);
   assert.match((await res.json()).error, /Item code/);
 });
 
+test('items: add, duplicate code, edit, deactivate', async () => {
+  const c = await loginAs('custodian1');
+  const body = { code: 'tst-1', description: 'Test item', unit: 'pc', location: 'Shelf 1', reorderPoint: 2, leadTimeDays: 5 };
+  const made = await call('POST', '/api/items', c, body);
+  assert.strictEqual(made.status, 201);
+  const { id } = await made.json();
+  assert.strictEqual((await call('POST', '/api/items', c, body)).status, 409);
+
+  assert.strictEqual((await call('PUT', `/api/items/${id}`, c, { ...body, description: 'Renamed', isActive: false })).status, 200);
+  const all = await (await call('GET', '/api/items?all=1', c)).json();
+  const row = all.find((i) => i.Code === 'TST-1');
+  assert.strictEqual(row.Description, 'Renamed');
+  assert.strictEqual(row.IsActive, 0);
+  const visible = await (await call('GET', '/api/items', await loginAs('foreman1'))).json();
+  assert.ok(!visible.some((i) => i.Code === 'TST-1'), 'inactive items are hidden from requesters');
+  assert.strictEqual((await call('PUT', '/api/items/9999', c, body)).status, 404);
+});
+
 test('a foreman filing an empty requisition gets a plain 400 message', async () => {
-  const foreman = await loginAs('foreman1');
-  const res = await call('POST', '/api/requisitions', foreman, {});
+  const res = await call('POST', '/api/requisitions', await loginAs('foreman1'), {});
   assert.strictEqual(res.status, 400);
   assert.match((await res.json()).error, /project/i);
 });
 
-test('a bad id is a 400, not a crash', async () => {
+test('bad ids and broken JSON are 400s, not crashes', async () => {
   const owner = await loginAs('owner1');
   assert.strictEqual((await call('GET', '/api/requisitions/abc', owner)).status, 400);
-});
-
-test('broken JSON is a 400', async () => {
-  const foreman = await loginAs('foreman1');
-  const res = await fetch(base + '/api/requisitions', {
-    method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: foreman }, body: '{oops',
-  });
+  const res = await callRaw('POST', '/api/requisitions', await loginAs('foreman1'), '{oops');
   assert.strictEqual(res.status, 400);
 });

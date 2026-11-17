@@ -1,16 +1,12 @@
 // One row per status change for any document: RF (requisition), IS (issuance slip), later PR, PO, RR.
-const { sql } = require('../db');
+const db = require('../db');
 
-async function addDocHistory(tx, docType, docId, from, to, userId, reason) {
-  await new sql.Request(tx)
-    .input('docType', sql.NVarChar(5), docType)
-    .input('id', sql.Int, docId)
-    .input('from', sql.NVarChar(30), from)
-    .input('to', sql.NVarChar(30), to)
-    .input('userId', sql.Int, userId)
-    .input('reason', sql.NVarChar(300), reason)
-    .query(`INSERT INTO dbo.StatusHistory (DocType, DocId, FromStatus, ToStatus, ChangedBy, Reason)
-            VALUES (@docType, @id, @from, @to, @userId, @reason)`);
+function addDocHistory(docType, docId, from, to, userId, reason) {
+  db.run(
+    `INSERT INTO StatusHistory (DocType, DocId, FromStatus, ToStatus, ChangedBy, Reason)
+     VALUES (@docType, @docId, @from, @to, @userId, @reason)`,
+    { docType, docId, from, to, userId, reason }
+  );
 }
 
 module.exports = { addDocHistory };
