@@ -7,6 +7,7 @@ const { STATUSES, validateRfInput, canRevise } = require('./rfRules');
 const { reserveForRequisition } = require('./reservation');
 const { createPurchaseRequisition } = require('./handoff');
 const { addDocHistory } = require('./history');
+const { notifyUser, notifyRole } = require('./notifications');
 
 const HEADER_SQL = `
   SELECT r.RequisitionId, r.RfNumber, r.ProjectId, p.Code AS ProjectCode, p.Name AS ProjectName,
@@ -21,6 +22,8 @@ const HEADER_SQL = `
   LEFT JOIN AppUser d ON d.UserId = r.DecidedBy`;
 
 const addHistory = (id, from, to, userId, reason) => addDocHistory('RF', id, from, to, userId, reason);
+const rfLink = (id) => `/requisition.html?id=${id}`;
+const nameOf = (userId) => db.get('SELECT FullName FROM AppUser WHERE UserId = @userId', { userId }).FullName;
 
 function assertCanView(user, rf) {
   if (user.role === 'owner') return;
@@ -97,6 +100,8 @@ function createRequisition(user, body) {
     );
     insertLines(id, input.lines);
     addHistory(id, null, 'pending', user.id, null);
+    // Flowchart: "Owner gets notification"
+    notifyRole('owner', `${rfNumber} was filed by ${nameOf(user.id)} and needs your approval.`, rfLink(id));
     return { id, rfNumber };
   });
 }
@@ -121,13 +126,22 @@ function approveRequisition(user, id) {
     addHistory(id, 'pending', 'approved', user.id, null);
 
     // Inventory check and reservation, in this same transaction.
+    const header = db.get('SELECT RfNumber, ProjectId, RequestedBy FROM Requisition WHERE RequisitionId = @id', { id });
     const shortages = reserveForRequisition(id);
     let purchaseRequisition = null;
     if (shortages.length) {
-      const header = db.get('SELECT RfNumber, ProjectId FROM Requisition WHERE RequisitionId = @id', { id });
       purchaseRequisition = createPurchaseRequisition({
         requisitionId: id, rfNumber: header.RfNumber, projectId: header.ProjectId, lines: shortages,
       });
+    }
+
+    // Tell the requestor, and the warehouse when something was reserved.
+    const short = shortages.length;
+    notifyUser(header.RequestedBy,
+      `${header.RfNumber} was approved. ${short ? `${short} item${short > 1 ? 's are' : ' is'} short of stock.` : 'All items are reserved.'}`,
+      rfLink(id));
+    if (db.get('SELECT 1 AS ok FROM RequisitionLine WHERE RequisitionId = @id AND QtyReserved > 0', { id })) {
+      notifyRole('custodian', `${header.RfNumber} is approved and has reserved items ready for a slip.`, '/slips.html');
     }
     return { id, status: 'approved', shortLines: shortages.length, purchaseRequisition };
   });
@@ -146,6 +160,8 @@ function returnRequisition(user, id, reasonText) {
     );
     if (changes === 0) throw explainNoChange(id, user, 'pending', false);
     addHistory(id, 'pending', 'returned', user.id, reason);
+    const header = db.get('SELECT RfNumber, RequestedBy FROM Requisition WHERE RequisitionId = @id', { id });
+    notifyUser(header.RequestedBy, `${header.RfNumber} was returned: ${reason}`, rfLink(id));
     return { id, status: 'returned' };
   });
 }
@@ -185,6 +201,8 @@ function reviseRequisition(user, id, body) {
     db.run('DELETE FROM RequisitionLine WHERE RequisitionId = @id', { id });
     insertLines(id, input.lines);
     addHistory(id, 'returned', 'pending', user.id, 'Revised and resubmitted');
+    const rfNumber = db.get('SELECT RfNumber FROM Requisition WHERE RequisitionId = @id', { id }).RfNumber;
+    notifyRole('owner', `${rfNumber} was revised by ${nameOf(user.id)} and needs your approval again.`, rfLink(id));
     return { id, status: 'pending' };
   });
 }

@@ -71,14 +71,29 @@ async function startPage(allowedRoles) {
   }
   const bar = document.getElementById('topbar');
   bar.className = 'brandbar';
+  bellBadge = h('span', { class: 'badge text-bg-danger ms-1', hidden: true }, '0');
   bar.replaceChildren(
     h('div', { class: 'container d-flex justify-content-between align-items-center py-2' },
       h('div', null,
         h('a', { href: '/app.html', class: 'text-white text-decoration-none fw-semibold' }, 'Ximon'),
         h('span', { class: 'muted ms-2 small' }, `${user.fullName}, ${ROLE_NAMES[user.role] || user.role}`)),
-      h('button', { class: 'btn btn-sm btn-outline-light', type: 'button', onclick: logout }, 'Log out'))
+      h('div', { class: 'd-flex gap-2' },
+        h('a', { class: 'btn btn-sm btn-outline-light', href: '/notifications.html' }, 'Notifications', bellBadge),
+        h('button', { class: 'btn btn-sm btn-outline-light', type: 'button', onclick: logout }, 'Log out')))
   );
+  refreshBell();
+  setInterval(refreshBell, 30000);
   return user;
+}
+
+// The number on the Notifications button in the top bar.
+let bellBadge = null;
+async function refreshBell() {
+  try {
+    const { unread } = await api('/api/notifications/count');
+    bellBadge.textContent = unread;
+    bellBadge.hidden = unread === 0;
+  } catch { /* the bell is not worth an error message */ }
 }
 
 function statusBadge(status) {

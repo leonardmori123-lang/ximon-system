@@ -5,6 +5,7 @@
 const db = require('../db');
 const { nextNumber } = require('./numbering');
 const { addDocHistory } = require('./history');
+const { notifyUser } = require('./notifications');
 const { HttpError } = require('./errors');
 
 const SLIP_STATUSES = ['prepared', 'released', 'acknowledged', 'cancelled'];
@@ -141,6 +142,12 @@ function releaseSlip(user, id) {
     );
     if (changes === 0) throw explainNoChange(id, 'prepared');
     addDocHistory('IS', id, 'prepared', 'released', user.id, null);
+    const slip = db.get(
+      `SELECT s.SlipNumber, r.RequestedBy FROM IssuanceSlip s
+       JOIN Requisition r ON r.RequisitionId = s.RequisitionId WHERE s.SlipId = @id`,
+      { id }
+    );
+    notifyUser(slip.RequestedBy, `${slip.SlipNumber} was released. Check the items and confirm receipt.`, `/slip.html?id=${id}`);
     return { id, status: 'released' };
   });
 }

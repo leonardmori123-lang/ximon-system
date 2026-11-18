@@ -36,3 +36,6 @@ a.screen-item:hover { background: var(--mist); }
 .table thead th { color: var(--steel); font-weight: 600; font-size: .875rem; border-bottom-color: var(--line); }
 .num { text-align: right; font-variant-numeric: tabular-nums; }
 .hint { color: var(--steel); font-size: .875rem; }
+
+/* Notifications */
+.note-unread { border-left: 3px solid var(--signal); background: #fbf3f2; }

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Notifications | Ximon</title>
+  <link href="/vendor/bootstrap/css/bootstrap.min.css" rel="stylesheet">
+  <link href="/css/app.css" rel="stylesheet">
+</head>
+<body>
+  <header id="topbar"></header>
+
+  <main class="container py-4 page-mid">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+      <h1 class="h5 mb-0">Notifications</h1>
+      <button id="mark-all" class="btn btn-outline-secondary btn-sm" type="button" disabled>Mark all as read</button>
+    </div>
+    <p id="error" class="status-bad" role="alert" hidden></p>
+    <div id="list" class="panel"></div>
+    <p id="empty" class="hint mt-3" hidden>Nothing yet. You will be told here when something needs you.</p>
+  </main>
+  <script src="/js/common.js"></script>
+  <script src="/js/notifications.js"></script>
+</body>
+</html>
