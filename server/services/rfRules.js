@@ -37,8 +37,9 @@ function validateRfInput(body, today = todayString()) {
   if (!Array.isArray(input.lines) || input.lines.length === 0) throw new HttpError(400, 'Add at least one item.');
   if (input.lines.length > 100) throw new HttpError(400, 'A requisition can have at most 100 items.');
 
+  const lines = [];
   const seen = new Set();
-  const lines = input.lines.map((line) => {
+  for (const line of input.lines) {
     const itemId = Number(line && line.itemId);
     const quantity = Number(line && line.quantity);
     if (!Number.isInteger(itemId) || itemId <= 0) throw new HttpError(400, 'Choose an item on every line.');
@@ -47,8 +48,8 @@ function validateRfInput(body, today = todayString()) {
     }
     if (seen.has(itemId)) throw new HttpError(400, 'An item is listed twice. Combine it into one line.');
     seen.add(itemId);
-    return { itemId, quantity };
-  });
+    lines.push({ itemId, quantity });
+  }
 
   return { projectId, dateNeeded, urgency, purpose, lines };
 }

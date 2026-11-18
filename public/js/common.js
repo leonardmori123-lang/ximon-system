@@ -62,11 +62,15 @@ async function logout() {
   location.href = '/';
 }
 
+// The red number on the Notifications button in the top bar (created in startPage).
+let bellBadge = null;
+
 // Call first on every page. Sends the person back if their role may not open the page.
 async function startPage(allowedRoles) {
   const user = await api('/api/me');
   if (allowedRoles && !allowedRoles.includes(user.role)) {
     location.href = '/app.html';
+    // This never finishes, so the rest of the page's code does not run while the browser leaves.
     return new Promise(() => {});
   }
   const bar = document.getElementById('topbar');
@@ -86,8 +90,7 @@ async function startPage(allowedRoles) {
   return user;
 }
 
-// The number on the Notifications button in the top bar.
-let bellBadge = null;
+// Asks the server how many notifications are unread and shows that number in the top bar.
 async function refreshBell() {
   try {
     const { unread } = await api('/api/notifications/count');

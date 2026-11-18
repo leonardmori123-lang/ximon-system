@@ -54,6 +54,29 @@ form.addEventListener('submit', async (event) => {
   }
 });
 
+// Revise mode: fill the form with the returned requisition so the foreman can fix it and send it again.
+async function fillFormForRevision() {
+  document.getElementById('title').textContent = 'Revise requisition';
+  document.getElementById('submit').textContent = 'Resubmit requisition';
+  try {
+    const rf = await api(`/api/requisitions/${encodeURIComponent(editId)}`);
+    if (!rf.canRevise) {
+      form.hidden = true;
+      showError(errorBox, 'This requisition cannot be revised.');
+      return;
+    }
+    document.getElementById('project').value = String(rf.ProjectId);
+    document.getElementById('date-needed').value = rf.DateNeeded;
+    document.getElementById('urgency').value = rf.Urgency;
+    document.getElementById('purpose').value = rf.Purpose;
+    linesBox.replaceChildren(...rf.lines.map((l) => lineRow({ itemId: l.ItemId, quantity: l.Quantity })));
+    if (rf.DateNeeded < todayLocal()) showError(errorBox, 'The old date needed has passed. Choose a new date.');
+  } catch (err) {
+    form.hidden = true;
+    showError(errorBox, err.message);
+  }
+}
+
 async function start() {
   await startPage(['foreman']);
   const [projects, itemList] = await Promise.all([api('/api/projects'), api('/api/items')]);
@@ -64,29 +87,10 @@ async function start() {
   document.getElementById('add-line').addEventListener('click', () => linesBox.append(lineRow()));
 
   if (editId) {
-    document.getElementById('title').textContent = 'Revise requisition';
-    document.getElementById('submit').textContent = 'Resubmit requisition';
-    try {
-      const rf = await api(`/api/requisitions/${encodeURIComponent(editId)}`);
-      if (!rf.canRevise) {
-        form.hidden = true;
-        showError(errorBox, 'This requisition cannot be revised.');
-        return;
-      }
-      document.getElementById('project').value = String(rf.ProjectId);
-      document.getElementById('date-needed').value = rf.DateNeeded;
-      document.getElementById('urgency').value = rf.Urgency;
-      document.getElementById('purpose').value = rf.Purpose;
-      linesBox.replaceChildren(...rf.lines.map((l) => lineRow({ itemId: l.ItemId, quantity: l.Quantity })));
-      if (rf.DateNeeded < todayLocal()) showError(errorBox, 'The old date needed has passed. Choose a new date.');
-      return;
-    } catch (err) {
-      form.hidden = true;
-      showError(errorBox, err.message);
-      return;
-    }
+    await fillFormForRevision();
+  } else {
+    linesBox.append(lineRow());
   }
-  linesBox.append(lineRow());
 }
 
 start();

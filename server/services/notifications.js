@@ -39,16 +39,19 @@ function markRead(userId, id) {
      WHERE NotificationId = @id AND UserId = @userId AND ReadAt IS NULL`,
     { id, userId }
   );
-  if (changes === 0 && !db.get('SELECT 1 AS ok FROM Notification WHERE NotificationId = @id AND UserId = @userId', { id, userId })) {
-    throw new HttpError(404, 'Notification not found.');
+  // Nothing changed: it was already read (fine), or it is not this person's notification (404).
+  if (changes === 0) {
+    const mine = db.get('SELECT 1 AS ok FROM Notification WHERE NotificationId = @id AND UserId = @userId', { id, userId });
+    if (!mine) throw new HttpError(404, 'Notification not found.');
   }
 }
 
 function markAllRead(userId) {
-  return { marked: db.run(
+  const { changes } = db.run(
     `UPDATE Notification SET ReadAt = datetime('now','localtime') WHERE UserId = @userId AND ReadAt IS NULL`,
     { userId }
-  ).changes };
+  );
+  return { marked: changes };
 }
 
 module.exports = { notifyUser, notifyRole, unreadCount, listFor, markRead, markAllRead };

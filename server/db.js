@@ -29,8 +29,12 @@ function open() {
 // SQLite cannot bind true/false or undefined, so turn them into 1/0 and null.
 function clean(params = {}) {
   const out = {};
-  for (const [name, value] of Object.entries(params)) {
-    out[name] = typeof value === 'boolean' ? (value ? 1 : 0) : value === undefined ? null : value;
+  for (const name of Object.keys(params)) {
+    let value = params[name];
+    if (value === true) value = 1;
+    else if (value === false) value = 0;
+    else if (value === undefined) value = null;
+    out[name] = value;
   }
   return out;
 }

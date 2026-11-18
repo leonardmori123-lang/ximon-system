@@ -157,6 +157,49 @@ function cancelSlip(user, id) {
   });
 }
 
+const STOCK_MISMATCH = 'The stock record does not match this slip. Ask the warehouse to check it.';
+
+// Takes one slip line out of stock. The reservation is used up and the stock leaves together,
+// so Available stays correct. Throws if the stock or the requisition no longer matches the slip.
+function issueLine(line, head, slipId) {
+  const moved = db.run(
+    `UPDATE Item SET OnHand = ROUND(OnHand - @qty, 2), Reserved = ROUND(Reserved - @qty, 2)
+     WHERE ItemId = @itemId AND Reserved + 0.001 >= @qty AND OnHand + 0.001 >= @qty`,
+    { itemId: line.ItemId, qty: line.Quantity }
+  );
+  if (moved.changes === 0) throw new HttpError(409, STOCK_MISMATCH);
+
+  const counted = db.run(
+    `UPDATE RequisitionLine SET QtyIssued = ROUND(QtyIssued + @qty, 2)
+     WHERE LineId = @lineId AND QtyIssued + @qty <= QtyReserved + 0.001`,
+    { lineId: line.RequisitionLineId, qty: line.Quantity }
+  );
+  if (counted.changes === 0) throw new HttpError(409, STOCK_MISMATCH);
+
+  db.run(
+    `INSERT INTO StockTransaction (ItemId, TxType, Quantity, RefDocType, RefDocId, ProjectId, CreatedBy, Note)
+     VALUES (@itemId, 'issue', @qty, 'IS', @slipId, @projectId, @userId, @note)`,
+    { itemId: line.ItemId, qty: -line.Quantity, slipId, projectId: head.ProjectId, userId: head.ReleasedBy, note: head.SlipNumber }
+  );
+}
+
+// Closes the requisition when every line is fully issued, otherwise marks it partly fulfilled.
+// Returns the requisition's new status.
+function updateRequisitionStatus(head, userId) {
+  const remaining = db.get(
+    'SELECT COUNT(*) AS n FROM RequisitionLine WHERE RequisitionId = @rid AND QtyIssued + 0.001 < Quantity',
+    { rid: head.RequisitionId }
+  ).n;
+  const nextStatus = remaining > 0 ? 'partly_fulfilled' : 'fulfilled';
+  const rf = db.get('SELECT Status FROM Requisition WHERE RequisitionId = @rid', { rid: head.RequisitionId });
+  if (rf.Status !== nextStatus) {
+    db.run(`UPDATE Requisition SET Status = @status, UpdatedAt = ${NOW} WHERE RequisitionId = @rid`,
+      { status: nextStatus, rid: head.RequisitionId });
+    addDocHistory('RF', head.RequisitionId, rf.Status, nextStatus, userId, `Items issued on ${head.SlipNumber}`);
+  }
+  return nextStatus;
+}
+
 // The requestor confirms receipt. This is the "signed acknowledgment": who, when, and optional remarks.
 // In the same transaction: deduct stock, log it, count what was issued, and close the requisition when done.
 function acknowledgeSlip(user, id, remarksText) {
@@ -184,43 +227,10 @@ function acknowledgeSlip(user, id, remarksText) {
       'SELECT RequisitionLineId, ItemId, Quantity FROM IssuanceLine WHERE SlipId = @id ORDER BY ItemId',
       { id }
     );
-    const mismatch = () => new HttpError(409, 'The stock record does not match this slip. Ask the warehouse to check it.');
-
     for (const line of lines) {
-      // The reservation is used up and the stock leaves together, so Available stays correct.
-      const moved = db.run(
-        `UPDATE Item SET OnHand = ROUND(OnHand - @qty, 2), Reserved = ROUND(Reserved - @qty, 2)
-         WHERE ItemId = @itemId AND Reserved + 0.001 >= @qty AND OnHand + 0.001 >= @qty`,
-        { itemId: line.ItemId, qty: line.Quantity }
-      );
-      if (moved.changes === 0) throw mismatch();
-
-      const counted = db.run(
-        `UPDATE RequisitionLine SET QtyIssued = ROUND(QtyIssued + @qty, 2)
-         WHERE LineId = @lineId AND QtyIssued + @qty <= QtyReserved + 0.001`,
-        { lineId: line.RequisitionLineId, qty: line.Quantity }
-      );
-      if (counted.changes === 0) throw mismatch();
-
-      db.run(
-        `INSERT INTO StockTransaction (ItemId, TxType, Quantity, RefDocType, RefDocId, ProjectId, CreatedBy, Note)
-         VALUES (@itemId, 'issue', @qty, 'IS', @slipId, @projectId, @userId, @note)`,
-        { itemId: line.ItemId, qty: -line.Quantity, slipId: id, projectId: head.ProjectId, userId: head.ReleasedBy, note: head.SlipNumber }
-      );
+      issueLine(line, head, id);
     }
-
-    // Close the requisition when every line is fully issued, otherwise mark it partly fulfilled.
-    const remaining = db.get(
-      'SELECT COUNT(*) AS n FROM RequisitionLine WHERE RequisitionId = @rid AND QtyIssued + 0.001 < Quantity',
-      { rid: head.RequisitionId }
-    ).n;
-    const nextStatus = remaining > 0 ? 'partly_fulfilled' : 'fulfilled';
-    const rf = db.get('SELECT Status FROM Requisition WHERE RequisitionId = @rid', { rid: head.RequisitionId });
-    if (rf.Status !== nextStatus) {
-      db.run(`UPDATE Requisition SET Status = @status, UpdatedAt = ${NOW} WHERE RequisitionId = @rid`,
-        { status: nextStatus, rid: head.RequisitionId });
-      addDocHistory('RF', head.RequisitionId, rf.Status, nextStatus, user.id, `Items issued on ${head.SlipNumber}`);
-    }
+    const nextStatus = updateRequisitionStatus(head, user.id);
     addDocHistory('IS', id, 'released', 'acknowledged', user.id, remarks || null);
     return { id, status: 'acknowledged', requisitionStatus: nextStatus };
   });

@@ -40,8 +40,49 @@ function stockNote(rf) {
   if (rf.Status === 'fulfilled') return h('p', { class: 'hint mt-2 mb-0' }, 'All items were issued. This requisition is closed.');
   const short = rf.lines.filter((l) => Number(l.QtyShort) > 0).length;
   if (short === 0) return h('p', { class: 'hint mt-2 mb-0' }, 'All items are reserved for this project.');
+  // A purchase requisition already exists, so the Document Trail shows its number and status instead.
+  if (rf.purchaseRequisitions.length > 0) return null;
   const itemWords = short === 1 ? '1 item is' : `${short} items are`;
   return h('p', { class: 'hint mt-2 mb-0' }, `${itemWords} short of stock. A purchase requisition is needed for the shortage.`);
+}
+
+// Labels and colours for the purchase requisition (PR) and purchase order (PO) statuses.
+const PR_STATUSES = {
+  pending: { label: 'Pending approval', color: 'text-bg-warning' },
+  approved: { label: 'Approved', color: 'text-bg-success' },
+  on_hold: { label: 'On hold', color: 'text-bg-info' },
+  cancelled: { label: 'Cancelled', color: 'text-bg-secondary' },
+};
+const PO_STATUSES = {
+  open: { label: 'Open', color: 'text-bg-primary' },
+  partly_delivered: { label: 'Partly delivered', color: 'text-bg-warning' },
+  closed: { label: 'Closed', color: 'text-bg-success' },
+};
+
+function documentStatus(statuses, status) {
+  const known = statuses[status] || { label: status, color: 'text-bg-light' };
+  return h('span', { class: `badge ${known.color}` }, known.label);
+}
+
+// The documents made because of this RF: its purchase requisitions and the purchase orders made from them.
+// There are no PR or PO pages yet, so the numbers are plain text. Make them links when those pages exist.
+function documentTrail(rf) {
+  if (rf.purchaseRequisitions.length === 0 && rf.purchaseOrders.length === 0) return null;
+  const rows = [];
+  for (const pr of rf.purchaseRequisitions) {
+    rows.push(h('tr', null,
+      h('td', null, 'Purchase requisition'), h('td', null, pr.PrNumber), h('td', null, documentStatus(PR_STATUSES, pr.Status))));
+  }
+  for (const po of rf.purchaseOrders) {
+    rows.push(h('tr', null,
+      h('td', null, 'Purchase order'), h('td', null, po.PoNumber), h('td', null, documentStatus(PO_STATUSES, po.Status))));
+  }
+  return h('div', null,
+    h('h2', { class: 'h6 mt-4' }, 'Document Trail'),
+    h('div', { class: 'panel table-responsive' },
+      h('table', { class: 'table mb-0' },
+        h('thead', null, h('tr', null, h('th', null, 'Document'), h('th', null, 'Number'), h('th', null, 'Status'))),
+        h('tbody', null, rows))));
 }
 
 function slipsPanel(rf) {
@@ -113,6 +154,7 @@ async function load() {
       h('div', { class: 'panel p-3' }, info(rf)),
       linesTable(rf),
       stockNote(rf),
+      documentTrail(rf),
       slipsPanel(rf),
       actions(rf),
       historyTable(rf),
