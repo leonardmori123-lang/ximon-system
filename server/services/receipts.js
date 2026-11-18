@@ -14,12 +14,12 @@
 // no stock behind.
 const db = require('../db');
 const { HttpError } = require('./errors');
-const { planAllocation } = require('./stockRules');
+const { hasTwoDecimals, planAllocation } = require('./stockRules');
 const { prepareSlip } = require('./issuance');
 const { notifyUser, notifyRole } = require('./notifications');
 
 const isId = (n) => Number.isInteger(n) && n > 0;
-const isQuantity = (n) => Number.isFinite(n) && n > 0 && n <= 1000000 && Math.abs(n * 100 - Math.round(n * 100)) < 1e-6;
+const isQuantity = (n) => n > 0 && n <= 1000000 && hasTwoDecimals(n);
 
 function receiveStock(input) {
   const { itemId, quantity, sourceDocument, projectId, userId } = input || {};

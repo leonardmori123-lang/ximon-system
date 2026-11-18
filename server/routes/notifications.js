@@ -1,6 +1,6 @@
 const express = require('express');
 const { requireLogin } = require('../auth');
-const { HttpError } = require('../services/errors');
+const { parseId } = require('../services/errors');
 const notes = require('../services/notifications');
 
 const router = express.Router();
@@ -20,9 +20,7 @@ router.post('/read-all', requireLogin, (req, res) => {
 });
 
 router.post('/:id/read', requireLogin, (req, res) => {
-  const id = Number.parseInt(req.params.id, 10);
-  if (!Number.isInteger(id) || id <= 0) throw new HttpError(400, 'Bad id.');
-  notes.markRead(req.session.user.id, id);
+  notes.markRead(req.session.user.id, parseId(req.params.id));
   res.json({ ok: true });
 });
 

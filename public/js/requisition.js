@@ -39,9 +39,9 @@ function stockNote(rf) {
   if (!STOCK_STATUSES.includes(rf.Status)) return null;
   if (rf.Status === 'fulfilled') return h('p', { class: 'hint mt-2 mb-0' }, 'All items were issued. This requisition is closed.');
   const short = rf.lines.filter((l) => Number(l.QtyShort) > 0).length;
-  return h('p', { class: 'hint mt-2 mb-0' }, short
-    ? `${short} item${short > 1 ? 's are' : ' is'} short of stock. A purchase requisition is needed for the shortage.`
-    : 'All items are reserved for this project.');
+  if (short === 0) return h('p', { class: 'hint mt-2 mb-0' }, 'All items are reserved for this project.');
+  const itemWords = short === 1 ? '1 item is' : `${short} items are`;
+  return h('p', { class: 'hint mt-2 mb-0' }, `${itemWords} short of stock. A purchase requisition is needed for the shortage.`);
 }
 
 function slipsPanel(rf) {
@@ -82,12 +82,12 @@ async function act(path, body, confirmText) {
 
 function actions(rf) {
   if (user.role === 'owner' && rf.Status === 'pending') {
-    const reason = h('textarea', { class: 'form-control', rows: 2, maxLength: 300, placeholder: 'Reason, required when returning' });
+    const reason = h('textarea', { class: 'form-control', id: 'return-reason', rows: 2, maxLength: 300, placeholder: 'Reason, required when returning' });
     return h('div', { class: 'panel p-3 mt-4' },
       h('div', { class: 'd-flex gap-2 mb-3' },
         h('button', { class: 'btn btn-success', type: 'button', onclick: () => act('approve') }, 'Approve')),
       h('label', { class: 'form-label', htmlFor: 'return-reason' }, 'Return to the requestor'),
-      Object.assign(reason, { id: 'return-reason' }),
+      reason,
       h('button', { class: 'btn btn-outline-secondary mt-2', type: 'button', onclick: () => act('return', { reason: reason.value }) }, 'Return with reason'));
   }
   if (user.role === 'foreman' && rf.Status === 'returned' && rf.RequestedBy === user.id) {

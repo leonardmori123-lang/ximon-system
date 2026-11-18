@@ -9,4 +9,14 @@ function addDocHistory(docType, docId, from, to, userId, reason) {
   );
 }
 
-module.exports = { addDocHistory };
+// All status changes of one document, oldest first. The pages show this as the History table.
+function getDocHistory(docType, docId) {
+  return db.all(
+    `SELECT h.FromStatus, h.ToStatus, u.FullName AS ChangedByName, substr(h.ChangedAt, 1, 16) AS ChangedAt, h.Reason
+     FROM StatusHistory h JOIN AppUser u ON u.UserId = h.ChangedBy
+     WHERE h.DocType = @docType AND h.DocId = @docId ORDER BY h.HistoryId`,
+    { docType, docId }
+  );
+}
+
+module.exports = { addDocHistory, getDocHistory };

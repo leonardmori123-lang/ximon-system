@@ -6,4 +6,11 @@ class HttpError extends Error {
   }
 }
 
-module.exports = { HttpError };
+// Turns text like "12" into the number 12. Throws a 400 if it is not a whole number above zero.
+function parseId(text, message = 'Bad id.') {
+  const id = Number.parseInt(text, 10);
+  if (!Number.isInteger(id) || id <= 0) throw new HttpError(400, message);
+  return id;
+}
+
+module.exports = { HttpError, parseId };

@@ -1,8 +1,5 @@
 const { HttpError } = require('./errors');
-
-function twoDecimals(n) {
-  return Number.isFinite(n) && Math.abs(n * 100 - Math.round(n * 100)) < 1e-6;
-}
+const { hasTwoDecimals } = require('./stockRules');
 
 // Checks the item form. Quantities on hand and reserved are never part of it.
 function validateItemInput(body, { creating }) {
@@ -27,7 +24,7 @@ function validateItemInput(body, { creating }) {
   item.location = location || null;
 
   item.reorderPoint = Number(input.reorderPoint === undefined || input.reorderPoint === '' ? 0 : input.reorderPoint);
-  if (!(item.reorderPoint >= 0) || item.reorderPoint > 1000000 || !twoDecimals(item.reorderPoint)) {
+  if (!(item.reorderPoint >= 0) || item.reorderPoint > 1000000 || !hasTwoDecimals(item.reorderPoint)) {
     throw new HttpError(400, 'Reorder point must be zero or more, with at most 2 decimals.');
   }
 

@@ -6,7 +6,7 @@ const { HttpError } = require('./errors');
 const { STATUSES, validateRfInput, canRevise } = require('./rfRules');
 const { reserveForRequisition } = require('./reservation');
 const { createPurchaseRequisition } = require('./handoff');
-const { addDocHistory } = require('./history');
+const { addDocHistory, getDocHistory } = require('./history');
 const { notifyUser, notifyRole } = require('./notifications');
 
 const HEADER_SQL = `
@@ -54,12 +54,7 @@ function getRequisition(user, id) {
      WHERE l.RequisitionId = @id ORDER BY l.LineId`,
     { id }
   );
-  result.history = db.all(
-    `SELECT h.FromStatus, h.ToStatus, u.FullName AS ChangedByName, substr(h.ChangedAt, 1, 16) AS ChangedAt, h.Reason
-     FROM StatusHistory h JOIN AppUser u ON u.UserId = h.ChangedBy
-     WHERE h.DocType = 'RF' AND h.DocId = @id ORDER BY h.HistoryId`,
-    { id }
-  );
+  result.history = getDocHistory('RF', id);
   result.slips = db.all(
     `SELECT SlipId, SlipNumber, Status, substr(PreparedAt, 1, 16) AS PreparedAt
      FROM IssuanceSlip WHERE RequisitionId = @id ORDER BY SlipId`,
@@ -136,10 +131,12 @@ function approveRequisition(user, id) {
     }
 
     // Tell the requestor, and the warehouse when something was reserved.
-    const short = shortages.length;
-    notifyUser(header.RequestedBy,
-      `${header.RfNumber} was approved. ${short ? `${short} item${short > 1 ? 's are' : ' is'} short of stock.` : 'All items are reserved.'}`,
-      rfLink(id));
+    let stockMessage = 'All items are reserved.';
+    if (shortages.length > 0) {
+      const itemWords = shortages.length === 1 ? '1 item is' : `${shortages.length} items are`;
+      stockMessage = `${itemWords} short of stock.`;
+    }
+    notifyUser(header.RequestedBy, `${header.RfNumber} was approved. ${stockMessage}`, rfLink(id));
     if (db.get('SELECT 1 AS ok FROM RequisitionLine WHERE RequisitionId = @id AND QtyReserved > 0', { id })) {
       notifyRole('custodian', `${header.RfNumber} is approved and has reserved items ready for a slip.`, '/slips.html');
     }

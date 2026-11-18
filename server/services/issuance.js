@@ -4,7 +4,7 @@
 // Stock is deducted only when the requestor confirms receipt.
 const db = require('../db');
 const { nextNumber } = require('./numbering');
-const { addDocHistory } = require('./history');
+const { addDocHistory, getDocHistory } = require('./history');
 const { notifyUser } = require('./notifications');
 const { HttpError } = require('./errors');
 
@@ -79,12 +79,7 @@ function getSlip(user, id) {
      WHERE l.SlipId = @id ORDER BY l.SlipLineId`,
     { id }
   );
-  slip.history = db.all(
-    `SELECT h.FromStatus, h.ToStatus, u.FullName AS ChangedByName, substr(h.ChangedAt, 1, 16) AS ChangedAt, h.Reason
-     FROM StatusHistory h JOIN AppUser u ON u.UserId = h.ChangedBy
-     WHERE h.DocType = 'IS' AND h.DocId = @id ORDER BY h.HistoryId`,
-    { id }
-  );
+  slip.history = getDocHistory('IS', id);
   return slip;
 }
 

@@ -1,5 +1,6 @@
 // Pure rules for the Requisition Form: no database in here, so they are easy to test.
 const { HttpError } = require('./errors');
+const { hasTwoDecimals } = require('./stockRules');
 
 const URGENCY = ['low', 'normal', 'high', 'urgent'];
 const STATUSES = ['pending', 'approved', 'returned', 'cancelled', 'partly_fulfilled', 'fulfilled'];
@@ -14,10 +15,6 @@ function isRealDate(text) {
   const [y, m, d] = text.split('-').map(Number);
   const date = new Date(y, m - 1, d);
   return date.getFullYear() === y && date.getMonth() === m - 1 && date.getDate() === d;
-}
-
-function isMoney2(n) {
-  return Number.isFinite(n) && Math.abs(n * 100 - Math.round(n * 100)) < 1e-6;
 }
 
 // Checks what the foreman typed and returns clean values, or throws a 400 with a plain message.
@@ -45,7 +42,7 @@ function validateRfInput(body, today = todayString()) {
     const itemId = Number(line && line.itemId);
     const quantity = Number(line && line.quantity);
     if (!Number.isInteger(itemId) || itemId <= 0) throw new HttpError(400, 'Choose an item on every line.');
-    if (!(quantity > 0) || quantity > 1000000 || !isMoney2(quantity)) {
+    if (!(quantity > 0) || quantity > 1000000 || !hasTwoDecimals(quantity)) {
       throw new HttpError(400, 'Each quantity must be above zero, with at most 2 decimals.');
     }
     if (seen.has(itemId)) throw new HttpError(400, 'An item is listed twice. Combine it into one line.');

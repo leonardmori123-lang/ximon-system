@@ -71,7 +71,6 @@ async function start() {
       if (!rf.canRevise) {
         form.hidden = true;
         showError(errorBox, 'This requisition cannot be revised.');
-        errorBox.hidden = false;
         return;
       }
       document.getElementById('project').value = String(rf.ProjectId);

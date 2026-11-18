@@ -1,16 +1,10 @@
 const express = require('express');
 const { ROLES, requireLogin, requireRole } = require('../auth');
-const { HttpError } = require('../services/errors');
+const { parseId } = require('../services/errors');
 const { listItems, createItem, updateItem } = require('../services/items');
 
 const router = express.Router();
 const EDITORS = [ROLES.OWNER, ROLES.CUSTODIAN];
-
-function idParam(req) {
-  const id = Number.parseInt(req.params.id, 10);
-  if (!Number.isInteger(id) || id <= 0) throw new HttpError(400, 'Bad id.');
-  return id;
-}
 
 // Everyone logged in can read the list. Editors also see inactive items with ?all=1.
 router.get('/', requireLogin, (req, res) => {
@@ -23,7 +17,7 @@ router.post('/', requireRole(...EDITORS), (req, res) => {
 });
 
 router.put('/:id', requireRole(...EDITORS), (req, res) => {
-  res.json(updateItem(idParam(req), req.body));
+  res.json(updateItem(parseId(req.params.id), req.body));
 });
 
 module.exports = router;
