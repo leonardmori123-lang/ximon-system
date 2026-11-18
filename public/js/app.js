@@ -2,7 +2,7 @@
 const ROLE_SCREENS = {
   owner: [
     { label: 'Approve or return requisitions', href: '/requisitions.html' },
-    { label: 'Approve purchase requisitions', href: null },
+    { label: 'Approve purchase requisitions', href: '/prs.html' },
     { label: 'Item list', href: '/items.html' },
     { label: 'Issuance slips', href: '/slips.html' },
     { label: 'Reports', href: null },
@@ -18,8 +18,8 @@ const ROLE_SCREENS = {
     { label: 'Reorder points', href: '/items.html' },
   ],
   purchaser: [
-    { label: 'Suppliers', href: null },
-    { label: 'Purchase requisitions', href: null },
+    { label: 'Suppliers', href: '/suppliers.html' },
+    { label: 'Purchase requisitions', href: '/prs.html' },
     { label: 'Purchase orders', href: null },
     { label: 'Late and outstanding deliveries', href: null },
   ],
