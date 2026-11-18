@@ -9,4 +9,12 @@ function planReservation(requested, available) {
   return { reserve, short };
 }
 
-module.exports = { planReservation };
+// Pure rule for giving delivered stock to the RF behind the purchase requisition.
+// Give what the RF still lacks, never more than arrived, never more than is free on the shelf.
+// Anything left over stays on the shelf as free stock.
+function planAllocation(received, qtyShort, available) {
+  const give = Math.min(Number(received), Number(qtyShort), Math.max(Number(available), 0));
+  return Math.max(Math.round(give * 100) / 100, 0);
+}
+
+module.exports = { planReservation, planAllocation };

@@ -131,7 +131,7 @@ function approveRequisition(user, id) {
     let purchaseRequisition = null;
     if (shortages.length) {
       purchaseRequisition = createPurchaseRequisition({
-        requisitionId: id, rfNumber: header.RfNumber, projectId: header.ProjectId, lines: shortages,
+        requisitionId: id, rfNumber: header.RfNumber, projectId: header.ProjectId, lines: shortages, userId: user.id,
       });
     }
 

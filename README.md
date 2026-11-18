@@ -50,9 +50,9 @@ Test users (password is `SEED_PASSWORD` from `.env`, default `ximon123`): `owner
 
 ## Handoff functions (agree names and inputs, then write them here)
 
-- `createPurchaseRequisition(input)` in `server/services/handoff.js`: called by Inventory when an approved RF has a shortage. It belongs to Purchasing. Input: `{ requisitionId, rfNumber, projectId, lines: [{ itemId, shortQty }] }`. It runs inside the approval transaction, so use `db.run(...)` directly.
-- `receiveStock(itemId, quantity, sourceDocument)`:
-- Allocate delivered items to the RF:
+- `createPurchaseRequisition(input)` in `server/services/handoff.js`: called by Inventory when an approved RF has a shortage. It belongs to Purchasing. Input: `{ requisitionId, rfNumber, projectId, lines: [{ itemId, shortQty }], userId }`. It runs inside the approval transaction, so use `db.run(...)` directly.
+- `receiveStock({ itemId, quantity, sourceDocument: { type, id, number }, projectId, userId })` in `server/services/receipts.js`: called by Delivery for each received line. Adds the units to Item.OnHand and logs a receipt.
+- `allocateToRequisition({ requisitionId, lines: [{ itemId, quantity }], userId })` in `server/services/receipts.js`: called by Delivery once per receiving report when the PR behind the PO has an RF. Sets the units aside for the RF, prepares an issuance slip and notifies the requestor and the custodian. Returns { allocated, slip }.
 
 ## Change log
 

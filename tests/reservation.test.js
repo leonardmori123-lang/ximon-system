@@ -41,7 +41,8 @@ test('no stock: nothing reserved, the shortage goes to purchasing', () => {
   assert.deepStrictEqual(lineOf(id, 'ACU-001'), { QtyReserved: 0, QtyShort: 1 });
   assert.strictEqual(handoffCalls.length, 1);
   assert.deepStrictEqual(handoffCalls[0], {
-    requisitionId: id, rfNumber, projectId: handoffCalls[0].projectId, lines: [{ itemId: itemId('ACU-001'), shortQty: 1 }],
+    requisitionId: id, rfNumber, projectId: handoffCalls[0].projectId,
+    lines: [{ itemId: itemId('ACU-001'), shortQty: 1 }], userId: owner.id,
   });
 });
 
