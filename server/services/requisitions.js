@@ -60,6 +60,20 @@ function getRequisition(user, id) {
      FROM IssuanceSlip WHERE RequisitionId = @id ORDER BY SlipId`,
     { id }
   );
+  // Document Trail: the PRs filed for this RF, and the POs made from those PRs.
+  // Only the number and status are sent. Prices and totals stay out of this response.
+  result.purchaseRequisitions = db.all(
+    `SELECT PrNumber, Status FROM PurchaseRequisition
+     WHERE RequisitionId = @id ORDER BY PurchaseRequisitionId`,
+    { id }
+  );
+  result.purchaseOrders = db.all(
+    `SELECT po.PoNumber, po.Status
+     FROM PurchaseOrder po
+     JOIN PurchaseRequisition pr ON pr.PurchaseRequisitionId = po.PurchaseRequisitionId
+     WHERE pr.RequisitionId = @id ORDER BY po.PurchaseOrderId`,
+    { id }
+  );
   result.canRevise = rf.RequestedBy === user.id && canRevise(rf);
   return result;
 }
