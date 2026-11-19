@@ -1,6 +1,7 @@
 // Purchasing rules that need no database, so they are easy to test.
 // Money is whole centavos: PHP 532.66 is 53266.
 const { HttpError } = require('./errors');
+const { todayString } = require('./rfRules');
 
 const PR_STATUSES = ['pending', 'approved', 'on_hold', 'cancelled'];
 // The purchaser can change the supplier and prices only while the owner has not approved.
@@ -101,7 +102,65 @@ function ownerDecisions(status, isPriced) {
   return Object.keys(DECISIONS).filter((action) => DECISIONS[action].from.includes(status) && (action !== 'approve' || isPriced));
 }
 
+// ---------- The purchase order ----------
+
+// A real calendar date written as 2026-11-19 (2026-02-30 is not one).
+function isRealDate(text) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return false;
+  const [y, m, d] = text.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  return date.getFullYear() === y && date.getMonth() === m - 1 && date.getDate() === d;
+}
+
+// The date a supplier with this lead time can deliver, counted from today. Null when the lead time is
+// not set (0 or empty), so the purchaser types the date.
+function defaultDeliveryDate(leadTimeDays, today = todayString()) {
+  if (!leadTimeDays) return null;
+  const [y, m, d] = today.split('-').map(Number);
+  return todayString(new Date(y, m - 1, d + Number(leadTimeDays)));
+}
+
+// Checks what the purchaser types when making a PO. A box left empty comes back as null (or 0 for the
+// discount), and the service then fills it from the supplier or the project.
+function validatePoInput(body, today = todayString()) {
+  const input = body || {};
+
+  let discountPercent = 0;
+  const raw = input.discountPercent;
+  if (raw !== undefined && raw !== null && String(raw).trim() !== '') discountPercent = typeof raw === 'number' ? raw : Number(String(raw).trim());
+  if (!Number.isFinite(discountPercent) || discountPercent < 0 || discountPercent > 100 || Math.round(discountPercent * 100) / 100 !== discountPercent) {
+    throw new HttpError(400, 'Enter the discount as a percent from 0 to 100, with at most 2 decimals.');
+  }
+
+  const expected = String(input.expectedDeliveryDate == null ? '' : input.expectedDeliveryDate).trim();
+  if (expected && (!isRealDate(expected) || expected < today)) {
+    throw new HttpError(400, 'Enter the expected delivery date as a real date, today or later.');
+  }
+
+  return {
+    discountPercent,
+    deliveryPoint: optionalText(input.deliveryPoint, 200, 'Delivery point'),
+    expectedDeliveryDate: expected || null,
+    paymentTerms: optionalText(input.paymentTerms, 100, 'Payment terms'),
+  };
+}
+
+// The discount in whole centavos, half up. The percent has at most 2 decimals, so it is turned into
+// hundredths of a percent first. That keeps the rounding exact (no 0.1 + 0.2 style drift).
+function poDiscount(subtotalCentavos, discountPercent) {
+  return Math.round((subtotalCentavos * Math.round(discountPercent * 100)) / 10000);
+}
+
+// Subtotal, discount and total of a PO from its line totals. The PO has no other discount and no
+// shipping yet (both stay 0), so total = subtotal - discount.
+function poTotals(lineTotals, discountPercent) {
+  const subtotalCentavos = lineTotals.reduce((sum, t) => sum + t, 0);
+  const discountCentavos = poDiscount(subtotalCentavos, discountPercent);
+  return { subtotalCentavos, discountCentavos, totalCentavos: subtotalCentavos - discountCentavos };
+}
+
 module.exports = {
   PR_STATUSES, PRICEABLE_STATUSES, MAX_PRICE_CENTAVOS, MAX_REASON_LENGTH, DECISIONS,
   validateSupplierInput, checkUnitPrice, validatePriceLines, lineTotal, prTotal, checkReason, ownerDecisions,
+  validatePoInput, defaultDeliveryDate, poDiscount, poTotals,
 };

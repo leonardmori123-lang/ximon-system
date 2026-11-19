@@ -1,10 +1,11 @@
-// Purchasing, build steps 1 to 4: the purchase requisition made from an RF shortage, suppliers and
-// their prices, pricing a purchase requisition, and the owner's decision on it (approve, hold, cancel).
-// Real database, real server.
+// Purchasing, build steps 1 to 5: the purchase requisition made from an RF shortage, suppliers and
+// their prices, pricing a purchase requisition, the owner's decision on it (approve, hold, cancel),
+// and the purchase order made from an approved one. Real database, real server.
 const test = require('node:test');
 const assert = require('node:assert');
-const { db, start, stop, loginAs, call, itemId, rfBody, user } = require('./helpers');
+const { db, start, stop, loginAs, call, itemId, projectId, rfBody, user } = require('./helpers');
 const rules = require('../server/services/purchasingRules');
+const { createPurchaseRequisition } = require('../server/services/handoff');
 
 test.before(start);
 test.after(stop);
@@ -526,4 +527,204 @@ test('cancel: needs a reason, works on a pending or a held PR, refuses a decided
   await json(await decide(owner, c.prId, 'approve'), 200);
   assert.strictEqual((await decide(owner, c.prId, 'cancel', 'x')).status, 409);
   assert.strictEqual(prRow(c.prId).Status, 'approved');
+});
+
+// ---------- Step 5: the purchase order ----------
+
+test('the PO discount is exact to the centavo, rounded half up', () => {
+  assert.strictEqual(rules.poDiscount(11286923, 58), 6546415, 'the client\'s PO');
+  assert.strictEqual(rules.poDiscount(11286923, 0), 0);
+  assert.strictEqual(rules.poDiscount(11286923, 100), 11286923);
+  assert.strictEqual(rules.poDiscount(1, 50), 1, '0.5 rounds up');
+  assert.strictEqual(rules.poDiscount(3, 50), 2, '1.5 rounds up');
+  assert.strictEqual(rules.poDiscount(5000, 0.07), 4, '3.5 rounds up');
+  // Plain floating point gets these wrong (5000 * 0.57 is 2849.9999999999995, so it rounds the 28.5 down to 28).
+  assert.strictEqual(rules.poDiscount(5000, 0.57), 29);
+  assert.strictEqual(rules.poDiscount(11000, 0.35), 39);
+  assert.strictEqual(rules.poDiscount(25000, 0.29), 73);
+  // Compare with exact whole-number arithmetic for many subtotals and percents.
+  for (const percent of [0.01, 0.07, 12.34, 33.33, 58, 99.99, 100]) {
+    const hundredths = BigInt(Math.round(percent * 100));
+    for (let subtotal = 0; subtotal <= 3000; subtotal += 1) {
+      const exact = Number((2n * BigInt(subtotal) * hundredths + 10000n) / 20000n); // floor((2a + b) / 2b) is a / b rounded half up
+      assert.strictEqual(rules.poDiscount(subtotal, percent), exact, `${subtotal} at ${percent}%`);
+    }
+  }
+});
+
+test('PO totals: subtotal, discount and total, with no other discount and no shipping', () => {
+  const lines = [585926, 845635, 862680, 504236, 2959230, 5529216];
+  assert.deepStrictEqual(rules.poTotals(lines, 58), { subtotalCentavos: 11286923, discountCentavos: 6546415, totalCentavos: 4740508 });
+  assert.deepStrictEqual(rules.poTotals(lines, 0), { subtotalCentavos: 11286923, discountCentavos: 0, totalCentavos: 11286923 });
+  assert.deepStrictEqual(rules.poTotals([199800], 10), { subtotalCentavos: 199800, discountCentavos: 19980, totalCentavos: 179820 });
+});
+
+test('PO form: empty boxes stay empty, text is trimmed, the discount and the date are checked', () => {
+  const today = '2026-11-19';
+  const empty = { discountPercent: 0, deliveryPoint: null, expectedDeliveryDate: null, paymentTerms: null };
+  assert.deepStrictEqual(rules.validatePoInput({}, today), empty);
+  assert.deepStrictEqual(rules.validatePoInput(undefined, today), empty);
+  assert.deepStrictEqual(
+    rules.validatePoInput({ discountPercent: '58', deliveryPoint: '  Site A  ', expectedDeliveryDate: '2026-11-19', paymentTerms: ' 30 days ' }, today),
+    { discountPercent: 58, deliveryPoint: 'Site A', expectedDeliveryDate: '2026-11-19', paymentTerms: '30 days' });
+  assert.strictEqual(rules.validatePoInput({ discountPercent: 12.5 }, today).discountPercent, 12.5);
+  assert.strictEqual(rules.validatePoInput({ discountPercent: '' }, today).discountPercent, 0);
+  assert.strictEqual(rules.validatePoInput({ discountPercent: 100 }, today).discountPercent, 100);
+
+  for (const bad of [-1, 100.01, 101, 12.345, 'abc', true, NaN, Infinity]) {
+    assert.throws(() => rules.validatePoInput({ discountPercent: bad }, today), /discount/i, String(bad));
+  }
+  for (const bad of ['2026-11-18', '2026-02-30', '19/11/2026', 'tomorrow']) {
+    assert.throws(() => rules.validatePoInput({ expectedDeliveryDate: bad }, today), /expected delivery date/i, bad);
+  }
+  assert.throws(() => rules.validatePoInput({ deliveryPoint: 'x'.repeat(201) }, today), /Delivery point/);
+  assert.throws(() => rules.validatePoInput({ paymentTerms: 'x'.repeat(101) }, today), /Payment terms/);
+});
+
+test('the default delivery date is today plus the supplier\'s lead time, and empty when there is none', () => {
+  assert.strictEqual(rules.defaultDeliveryDate(30, '2026-11-19'), '2026-12-19');
+  assert.strictEqual(rules.defaultDeliveryDate(30, '2026-12-20'), '2027-01-19', 'across the new year');
+  assert.strictEqual(rules.defaultDeliveryDate(1, '2026-02-28'), '2026-03-01');
+  for (const none of [0, null, undefined]) assert.strictEqual(rules.defaultDeliveryDate(none, '2026-11-19'), null, String(none));
+});
+
+// A PR for the client's six HDPE items, the way the handoff makes it, then priced from the supplier's list and approved.
+async function clientPr() {
+  const codes = ['HDPE-001', 'HDPE-002', 'HDPE-003', 'HDPE-004', 'HDPE-005', 'HDPE-006'];
+  const quantities = [11, 5, 20, 4, 30, 24];
+  const { prNumber } = db.transaction(() => createPurchaseRequisition({
+    requisitionId: null, rfNumber: 'RF-TEST', projectId: projectId(), userId: user('owner1').id,
+    lines: codes.map((code, i) => ({ itemId: itemId(code), shortQty: quantities[i] })),
+  }));
+  const prId = db.get('SELECT PurchaseRequisitionId AS id FROM PurchaseRequisition WHERE PrNumber = @prNumber', { prNumber }).id;
+
+  const purchaser = await loginAs('purchaser1');
+  const supplier = await json(await call('GET', `/api/purchasing/suppliers/${supplierId()}`, purchaser), 200);
+  const listed = new Map(supplier.prices.map((p) => [p.ItemId, p.UnitPriceCentavos]));
+  const detail = await json(await call('GET', `/api/purchasing/prs/${prId}`, purchaser), 200);
+  const lines = detail.lines.map((l) => ({ prLineId: l.PrLineId, unitPriceCentavos: listed.get(l.ItemId) }));
+  await json(await call('PUT', `/api/purchasing/prs/${prId}/prices`, purchaser, { supplierId: supplierId(), lines }), 200);
+  await json(await decide(await loginAs('owner1'), prId, 'approve'), 200);
+  return prId;
+}
+
+// An ACU-001 PR (no stock, so the whole quantity is short), priced at one price and approved.
+async function approvedPr(quantity = 2, unitPriceCentavos = 99900) {
+  const made = await shortagePr([['ACU-001', quantity]]);
+  await priceIt(made.prId, await loginAs('purchaser1'), unitPriceCentavos);
+  await json(await decide(await loginAs('owner1'), made.prId, 'approve'), 200);
+  return made;
+}
+
+const makePo = (purchaser, prId, body) => call('POST', `/api/purchasing/prs/${prId}/po`, purchaser, body === undefined ? {} : body);
+const poCounts = () => [
+  db.get('SELECT COUNT(*) AS n FROM PurchaseOrder').n,
+  db.get('SELECT COUNT(*) AS n FROM POLine').n,
+  db.get(`SELECT COUNT(*) AS n FROM StatusHistory WHERE DocType = 'PO'`).n,
+];
+
+test('only the purchaser can make a PO', async () => {
+  assert.strictEqual((await call('POST', '/api/purchasing/prs/1/po')).status, 401);
+  for (const who of ['owner1', 'foreman1', 'custodian1', 'verifier1']) {
+    assert.strictEqual((await makePo(await loginAs(who), 1)).status, 403, who);
+  }
+});
+
+test('the client\'s PO from an approved PR: 47,405.08 to the centavo, with the supplier\'s defaults and the history written', async () => {
+  const purchaser = await loginAs('purchaser1');
+  const prId = await clientPr();
+  const project = db.get('SELECT Code, Name FROM Project WHERE ProjectId = @id', { id: projectId() });
+
+  const res = await json(await makePo(purchaser, prId, { discountPercent: 58 }), 201);
+  assert.match(res.poNumber, /^PO-\d{4}-\d{4}$/);
+  assert.deepStrictEqual({ ...res, id: undefined, poNumber: undefined }, {
+    id: undefined, poNumber: undefined, status: 'open', subtotalCentavos: 11286923, discountCentavos: 6546415, totalCentavos: 4740508,
+  });
+
+  const po = { ...db.get('SELECT * FROM PurchaseOrder WHERE PurchaseOrderId = @id', { id: res.id }) };
+  assert.deepStrictEqual(
+    [po.PoNumber, po.PurchaseRequisitionId, po.SupplierId, po.ProjectId, po.Status, po.CreatedBy],
+    [res.poNumber, prId, supplierId(), projectId(), 'open', user('purchaser1').id]);
+  assert.deepStrictEqual(
+    [po.DiscountPercent, po.SubtotalCentavos, po.DiscountCentavos, po.OtherDiscountCentavos, po.ShippingCentavos, po.TotalCentavos],
+    [58, 11286923, 6546415, 0, 0, 4740508]);
+  assert.strictEqual(po.PaymentTerms, '30 days', 'from the supplier');
+  assert.strictEqual(po.ExpectedDeliveryDate, rules.defaultDeliveryDate(30), 'today plus the supplier\'s lead time');
+  assert.strictEqual(po.DeliveryPoint, `${project.Code}, ${project.Name}`, 'the project');
+
+  const lines = db.all(
+    `SELECT l.PrLineId, i.Code, l.Quantity, l.UnitPriceCentavos, l.LineTotalCentavos, l.QtyReceived
+     FROM POLine l JOIN Item i ON i.ItemId = l.ItemId WHERE l.PurchaseOrderId = @id ORDER BY l.PoLineId`, { id: res.id }
+  ).map((l) => ({ ...l }));
+  const prLineIds = db.all('SELECT PrLineId FROM PRLine WHERE PurchaseRequisitionId = @prId ORDER BY PrLineId', { prId }).map((l) => l.PrLineId);
+  const codes = ['HDPE-001', 'HDPE-002', 'HDPE-003', 'HDPE-004', 'HDPE-005', 'HDPE-006'];
+  const quantities = [11, 5, 20, 4, 30, 24];
+  const prices = [53266, 169127, 43134, 126059, 98641, 230384];
+  const totals = [585926, 845635, 862680, 504236, 2959230, 5529216];
+  assert.deepStrictEqual(lines, codes.map((Code, i) => ({
+    PrLineId: prLineIds[i], Code, Quantity: quantities[i], UnitPriceCentavos: prices[i], LineTotalCentavos: totals[i], QtyReceived: 0,
+  })));
+
+  assert.strictEqual(prRow(prId).Status, 'approved', 'the PR stays approved');
+  assert.deepStrictEqual(db.all(`SELECT FromStatus, ToStatus, Reason FROM StatusHistory WHERE DocType = 'PO' AND DocId = @id`, { id: res.id }).map((h) => ({ ...h })),
+    [{ FromStatus: null, ToStatus: 'open', Reason: null }]);
+});
+
+test('a PO is made only from an approved PR, only once; a refusal writes nothing and uses no PO number', async () => {
+  const purchaser = await loginAs('purchaser1');
+  const owner = await loginAs('owner1');
+
+  const pending = await shortagePr();
+  await priceIt(pending.prId, purchaser); // priced, but the owner has not approved
+  const held = await shortagePr();
+  await json(await decide(owner, held.prId, 'hold', 'Wait for a second quote'), 200);
+  const cancelled = await shortagePr();
+  await json(await decide(owner, cancelled.prId, 'cancel', 'Not needed any more'), 200);
+
+  const before = poCounts();
+  for (const [made, word] of [[pending, 'pending'], [held, 'on hold'], [cancelled, 'cancelled']]) {
+    const res = await makePo(purchaser, made.prId);
+    assert.strictEqual(res.status, 409, word);
+    assert.match((await res.json()).error, new RegExp(`is ${word}`), word);
+  }
+  assert.strictEqual((await makePo(purchaser, 99999)).status, 404);
+  assert.strictEqual((await call('POST', '/api/purchasing/prs/abc/po', purchaser, {})).status, 400);
+  assert.deepStrictEqual(poCounts(), before, 'the refusals wrote nothing');
+
+  // One PO per PR. The second try is refused and names the first PO.
+  const a = await approvedPr();
+  const first = await json(await makePo(purchaser, a.prId), 201);
+  const again = await makePo(purchaser, a.prId);
+  assert.strictEqual(again.status, 409);
+  assert.ok((await again.json()).error.includes(first.poNumber));
+  assert.strictEqual(db.get('SELECT COUNT(*) AS n FROM PurchaseOrder WHERE PurchaseRequisitionId = @id', { id: a.prId }).n, 1);
+
+  // The refusals above took no number: the next PO is the next number.
+  const b = await approvedPr();
+  const second = await json(await makePo(purchaser, b.prId), 201);
+  assert.strictEqual(Number(second.poNumber.slice(-4)), Number(first.poNumber.slice(-4)) + 1);
+});
+
+test('PO form: typed values are saved, bad ones save nothing, and the RF\'s Document Trail finds the PO', async () => {
+  const purchaser = await loginAs('purchaser1');
+  const foreman = await loginAs('foreman1');
+  const a = await approvedPr(2, 99900); // 2 x 999.00 = 1,998.00
+
+  const before = poCounts();
+  for (const bad of [{ discountPercent: 101 }, { discountPercent: 12.345 }, { expectedDeliveryDate: '2020-01-01' }, { deliveryPoint: 'x'.repeat(201) }]) {
+    assert.strictEqual((await makePo(purchaser, a.prId, bad)).status, 400, JSON.stringify(bad));
+  }
+  assert.deepStrictEqual(poCounts(), before);
+
+  const date = rules.defaultDeliveryDate(5);
+  const res = await json(await makePo(purchaser, a.prId, {
+    discountPercent: '10', deliveryPoint: 'Warehouse 2, Mandaue', expectedDeliveryDate: date, paymentTerms: 'Cash on delivery',
+  }), 201);
+  assert.deepStrictEqual([res.subtotalCentavos, res.discountCentavos, res.totalCentavos], [199800, 19980, 179820]);
+  const po = { ...db.get('SELECT * FROM PurchaseOrder WHERE PurchaseOrderId = @id', { id: res.id }) };
+  assert.deepStrictEqual([po.DiscountPercent, po.DeliveryPoint, po.ExpectedDeliveryDate, po.PaymentTerms],
+    [10, 'Warehouse 2, Mandaue', date, 'Cash on delivery']);
+
+  const trail = await json(await call('GET', `/api/requisitions/${a.rf.id}`, foreman), 200);
+  assert.deepStrictEqual(trail.purchaseOrders, [{ PoNumber: res.poNumber, Status: 'open' }]);
 });

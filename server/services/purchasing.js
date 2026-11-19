@@ -1,12 +1,14 @@
-// Purchasing module: suppliers, their prices, and the purchase requisitions (PR) made from RF shortages.
+// Purchasing module: suppliers, their prices, the purchase requisitions (PR) made from RF shortages,
+// and the purchase orders (PO) made from approved PRs.
 // The PR itself is created in handoff.js, inside the owner's approval of the RF.
 const db = require('../db');
 const { HttpError } = require('./errors');
 const { addDocHistory, getDocHistory } = require('./history');
+const { nextNumber } = require('./numbering');
 const { notifyUser, notifyRole } = require('./notifications');
 const {
   PR_STATUSES, PRICEABLE_STATUSES, DECISIONS, validateSupplierInput, checkUnitPrice, validatePriceLines, lineTotal, prTotal,
-  checkReason, ownerDecisions,
+  checkReason, ownerDecisions, validatePoInput, defaultDeliveryDate, poTotals,
 } = require('./purchasingRules');
 
 // ---------- Suppliers ----------
@@ -267,7 +269,72 @@ function decidePr(user, id, action, body) {
   });
 }
 
+// ---------- The purchase order ----------
+
+// The purchaser turns an approved PR into a numbered PO. One PO per PR.
+// body: { discountPercent, deliveryPoint, expectedDeliveryDate, paymentTerms }, all optional:
+//   discount 0; delivery point the project; expected date today plus the supplier's lead time; terms the supplier's.
+// The PO copies the supplier, the quantities and the prices from the PR. PurchaseRequisitionId is always set,
+// because the RF's Document Trail finds the PO through it.
+function createPo(user, prId, body) {
+  const input = validatePoInput(body);
+
+  return db.transaction(() => {
+    const pr = db.get(
+      `SELECT pr.Status, pr.ProjectId, p.Code AS ProjectCode, p.Name AS ProjectName
+       FROM PurchaseRequisition pr JOIN Project p ON p.ProjectId = pr.ProjectId
+       WHERE pr.PurchaseRequisitionId = @prId`,
+      { prId }
+    );
+    if (!pr) throw new HttpError(404, 'Purchase requisition not found.');
+    if (pr.Status !== 'approved') {
+      throw new HttpError(409, `This purchase requisition is ${pr.Status.replace('_', ' ')}, so it cannot become a purchase order. Only an approved one can.`);
+    }
+    const existing = db.get('SELECT PoNumber FROM PurchaseOrder WHERE PurchaseRequisitionId = @prId', { prId });
+    if (existing) throw new HttpError(409, `This purchase requisition already has a purchase order (${existing.PoNumber}).`);
+
+    const lines = db.all(
+      `SELECT PrLineId, ItemId, ShortQty, SupplierId, UnitPriceCentavos
+       FROM PRLine WHERE PurchaseRequisitionId = @prId ORDER BY PrLineId`,
+      { prId }
+    );
+    const supplierIds = new Set(lines.map((l) => l.SupplierId));
+    if (lines.length === 0 || lines.some((l) => l.UnitPriceCentavos == null) || supplierIds.size !== 1) {
+      throw new HttpError(409, 'Every line needs the same supplier and a price before a purchase order can be made.');
+    }
+    const supplier = db.get('SELECT SupplierId, PaymentTerms, LeadTimeDays FROM Supplier WHERE SupplierId = @id', { id: lines[0].SupplierId });
+
+    const lineTotals = lines.map((l) => lineTotal(l.ShortQty, l.UnitPriceCentavos));
+    const { subtotalCentavos, discountCentavos, totalCentavos } = poTotals(lineTotals, input.discountPercent);
+
+    const poNumber = nextNumber('PO');
+    const { lastId: poId } = db.run(
+      `INSERT INTO PurchaseOrder (PoNumber, PurchaseRequisitionId, SupplierId, ProjectId, PaymentTerms, ExpectedDeliveryDate,
+                                  DeliveryPoint, DiscountPercent, SubtotalCentavos, DiscountCentavos, TotalCentavos, CreatedBy)
+       VALUES (@poNumber, @prId, @supplierId, @projectId, @paymentTerms, @expectedDate,
+               @deliveryPoint, @discountPercent, @subtotal, @discount, @total, @userId)`,
+      {
+        poNumber, prId, supplierId: supplier.SupplierId, projectId: pr.ProjectId,
+        paymentTerms: input.paymentTerms || supplier.PaymentTerms,
+        expectedDate: input.expectedDeliveryDate || defaultDeliveryDate(supplier.LeadTimeDays),
+        deliveryPoint: input.deliveryPoint || `${pr.ProjectCode}, ${pr.ProjectName}`,
+        discountPercent: input.discountPercent,
+        subtotal: subtotalCentavos, discount: discountCentavos, total: totalCentavos, userId: user.id,
+      }
+    );
+    lines.forEach((line, i) => {
+      db.run(
+        `INSERT INTO POLine (PurchaseOrderId, PrLineId, ItemId, Quantity, UnitPriceCentavos, LineTotalCentavos)
+         VALUES (@poId, @prLineId, @itemId, @quantity, @price, @lineTotal)`,
+        { poId, prLineId: line.PrLineId, itemId: line.ItemId, quantity: line.ShortQty, price: line.UnitPriceCentavos, lineTotal: lineTotals[i] }
+      );
+    });
+    addDocHistory('PO', poId, null, 'open', user.id, null);
+    return { id: poId, poNumber, status: 'open', subtotalCentavos, discountCentavos, totalCentavos };
+  });
+}
+
 module.exports = {
   listSuppliers, getSupplier, createSupplier, updateSupplier, saveSupplierPrice,
-  listPrs, getPr, savePrices, decidePr,
+  listPrs, getPr, savePrices, decidePr, createPo,
 };

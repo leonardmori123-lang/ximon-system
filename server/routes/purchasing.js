@@ -54,4 +54,9 @@ router.post('/prs/:id/cancel', requireRole(ROLES.OWNER), (req, res) => {
   res.json(purchasing.decidePr(req.session.user, parseId(req.params.id), 'cancel', req.body));
 });
 
+// The purchaser makes the purchase order from an approved PR.
+router.post('/prs/:id/po', requireRole(ROLES.PURCHASER), (req, res) => {
+  res.status(201).json(purchasing.createPo(req.session.user, parseId(req.params.id), req.body));
+});
+
 module.exports = router;
