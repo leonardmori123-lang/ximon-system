@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Suppliers | Ximon</title>
+  <link href="/vendor/bootstrap/css/bootstrap.min.css" rel="stylesheet">
+  <link href="/css/app.css" rel="stylesheet">
+</head>
+<body>
+  <header id="topbar"></header>
+
+  <main class="container py-4 page-wide">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+      <h1 class="h5 mb-0">Suppliers</h1>
+      <button id="add" class="btn btn-ximon text-nowrap" type="button">Add supplier</button>
+    </div>
+    <p id="error" class="status-bad" role="alert" hidden></p>
+
+    <form id="supplier-form" class="panel p-4 mb-4" novalidate hidden>
+      <h2 id="form-title" class="h6 mb-3">Add supplier</h2>
+      <div class="row g-3">
+        <div class="col-md-6">
+          <label class="form-label" for="f-name">Supplier name</label>
+          <input id="f-name" class="form-control" maxlength="100" required>
+        </div>
+        <div class="col-md-6">
+          <label class="form-label" for="f-contact">Contact person</label>
+          <input id="f-contact" class="form-control" maxlength="100">
+        </div>
+        <div class="col-md-4">
+          <label class="form-label" for="f-phone">Phone</label>
+          <input id="f-phone" class="form-control" maxlength="40">
+        </div>
+        <div class="col-md-8">
+          <label class="form-label" for="f-email">Email</label>
+          <input id="f-email" class="form-control" type="email" maxlength="100">
+        </div>
+        <div class="col-12">
+          <label class="form-label" for="f-address">Address</label>
+          <input id="f-address" class="form-control" maxlength="200">
+        </div>
+        <div class="col-md-8">
+          <label class="form-label" for="f-terms">Payment terms</label>
+          <input id="f-terms" class="form-control" maxlength="100" placeholder="30 days">
+        </div>
+        <div class="col-md-4">
+          <label class="form-label" for="f-lead">Lead time (days)</label>
+          <input id="f-lead" class="form-control" type="number" min="0" max="1000" step="1" value="0">
+        </div>
+        <div class="col-12" id="active-wrap">
+          <div class="form-check">
+            <input id="f-active" class="form-check-input" type="checkbox" checked>
+            <label class="form-check-label" for="f-active">Active (can be chosen on a purchase requisition)</label>
+          </div>
+        </div>
+      </div>
+      <p id="form-error" class="status-bad small mt-3 mb-0" role="alert" hidden></p>
+      <div class="d-flex gap-2 mt-3">
+        <button type="submit" class="btn btn-ximon">Save supplier</button>
+        <button id="cancel" type="button" class="btn btn-outline-secondary">Cancel</button>
+      </div>
+    </form>
+
+    <div class="panel table-responsive">
+      <table class="table mb-0 align-middle">
+        <thead>
+          <tr>
+            <th>Supplier</th><th>Contact</th><th>Payment terms</th>
+            <th class="num">Lead time (days)</th><th class="num">Items priced</th><th>Status</th><th></th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <p id="empty" class="hint mt-3" hidden>No suppliers yet.</p>
+
+    <section id="prices" class="mt-4" hidden>
+      <h2 id="prices-title" class="h6">Prices</h2>
+      <p class="hint">Unit prices in pesos. Save each price on its own row. A price saved here is the first one offered on a purchase requisition.</p>
+      <div class="panel table-responsive">
+        <table class="table mb-0 align-middle">
+          <thead><tr><th>Code</th><th>Description</th><th>Unit</th><th class="num" style="width: 11rem;">Price (PHP)</th><th></th></tr></thead>
+          <tbody id="price-rows"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+  <script src="/js/common.js"></script>
+  <script src="/js/purchasing-ui.js"></script>
+  <script src="/js/suppliers.js"></script>
+</body>
+</html>
