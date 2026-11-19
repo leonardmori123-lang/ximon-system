@@ -68,10 +68,11 @@ function pricingForm(pr, suppliers) {
     });
     totalCell.textContent = complete ? pesos(total) : '';
   }
-  inputs.forEach((input) => input.addEventListener('input', recalc));
+  inputs.forEach((input) => input.addEventListener('input', () => { showError(formError, ''); recalc(); }));
 
   // A new supplier fills the boxes from that supplier's saved prices; empty where it has none.
   select.addEventListener('change', async () => {
+    showError(formError, '');
     fillNote.textContent = '';
     if (!select.value) return;
     try {
