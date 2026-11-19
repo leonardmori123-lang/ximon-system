@@ -28,7 +28,7 @@ router.put('/suppliers/:id/prices/:itemId', requireRole(ROLES.PURCHASER), (req, 
   res.json(purchasing.saveSupplierPrice(supplierId, itemId, (req.body || {}).unitPriceCentavos));
 });
 
-// Purchase requisitions: the purchaser prices them, the owner reads them (and decides, in the next build step).
+// Purchase requisitions: the purchaser prices them, the owner reads them and decides.
 router.get('/prs', requireRole(ROLES.PURCHASER, ROLES.OWNER), (req, res) => {
   res.json(purchasing.listPrs(req.query.status));
 });
@@ -39,6 +39,19 @@ router.get('/prs/:id', requireRole(ROLES.PURCHASER, ROLES.OWNER), (req, res) => 
 
 router.put('/prs/:id/prices', requireRole(ROLES.PURCHASER), (req, res) => {
   res.json(purchasing.savePrices(req.session.user, parseId(req.params.id), req.body));
+});
+
+// The owner's decisions. Hold and cancel take { reason }.
+router.post('/prs/:id/approve', requireRole(ROLES.OWNER), (req, res) => {
+  res.json(purchasing.decidePr(req.session.user, parseId(req.params.id), 'approve', req.body));
+});
+
+router.post('/prs/:id/hold', requireRole(ROLES.OWNER), (req, res) => {
+  res.json(purchasing.decidePr(req.session.user, parseId(req.params.id), 'hold', req.body));
+});
+
+router.post('/prs/:id/cancel', requireRole(ROLES.OWNER), (req, res) => {
+  res.json(purchasing.decidePr(req.session.user, parseId(req.params.id), 'cancel', req.body));
 });
 
 module.exports = router;

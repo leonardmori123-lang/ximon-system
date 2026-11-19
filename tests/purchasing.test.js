@@ -1,5 +1,6 @@
-// Purchasing, build steps 1 to 3: the purchase requisition made from an RF shortage, suppliers and
-// their prices, and pricing a purchase requisition. Real database, real server.
+// Purchasing, build steps 1 to 4: the purchase requisition made from an RF shortage, suppliers and
+// their prices, pricing a purchase requisition, and the owner's decision on it (approve, hold, cancel).
+// Real database, real server.
 const test = require('node:test');
 const assert = require('node:assert');
 const { db, start, stop, loginAs, call, itemId, rfBody, user } = require('./helpers');
@@ -24,6 +25,23 @@ async function shortagePr(lines = [['ACU-001', 2]]) {
   const pr = db.get('SELECT PurchaseRequisitionId AS id FROM PurchaseRequisition WHERE RequisitionId = @id', { id: rf.id });
   return { rf, approved, prId: pr && pr.id };
 }
+
+const prNumberOf = (prId) => db.get('SELECT PrNumber FROM PurchaseRequisition WHERE PurchaseRequisitionId = @prId', { prId }).PrNumber;
+const rfNumberOf = (rfId) => db.get('SELECT RfNumber FROM Requisition WHERE RequisitionId = @rfId', { rfId }).RfNumber;
+const prRow = (prId) => ({ ...db.get('SELECT Status, Reason, DecidedBy FROM PurchaseRequisition WHERE PurchaseRequisitionId = @prId', { prId }) });
+const historyOf = (prId) => db.all(
+  `SELECT FromStatus, ToStatus, Reason FROM StatusHistory WHERE DocType = 'PR' AND DocId = @prId ORDER BY HistoryId`, { prId }
+).map((row) => ({ ...row }));
+
+// The purchaser saves the seeded supplier and one price on every line of the PR.
+async function priceIt(prId, purchaser, unitPriceCentavos = 99900) {
+  const detail = await json(await call('GET', `/api/purchasing/prs/${prId}`, purchaser), 200);
+  const lines = detail.lines.map((l) => ({ prLineId: l.PrLineId, unitPriceCentavos }));
+  await json(await call('PUT', `/api/purchasing/prs/${prId}/prices`, purchaser, { supplierId: supplierId(), lines }), 200);
+}
+
+// The owner presses approve, hold or cancel. No reason argument sends a body without one.
+const decide = (owner, prId, action, reason) => call('POST', `/api/purchasing/prs/${prId}/${action}`, owner, reason === undefined ? {} : { reason });
 
 // ---------- Rules with no database ----------
 
@@ -70,6 +88,25 @@ test('prices must cover every line of the PR once', () => {
   assert.throws(() => rules.validatePriceLines([{ prLineId: 1, unitPriceCentavos: 0 }], [1]), /unit price/i);
 });
 
+test('the reason for holding or cancelling is required, trimmed and at most 300 characters', () => {
+  assert.strictEqual(rules.checkReason('  Price too high  ', 'hold'), 'Price too high');
+  assert.strictEqual(rules.checkReason('x'.repeat(300), 'cancel').length, 300);
+  for (const bad of [undefined, null, '', '   ', 'x'.repeat(301)]) {
+    assert.throws(() => rules.checkReason(bad, 'hold'), /putting it on hold/, String(bad));
+    assert.throws(() => rules.checkReason(bad, 'cancel'), /cancelling it/, String(bad));
+  }
+});
+
+test('the owner can approve or hold a pending PR, cancel a pending or held one, and approve only a priced one', () => {
+  const decisions = rules.ownerDecisions;
+  assert.deepStrictEqual(decisions('pending', true), ['approve', 'hold', 'cancel']);
+  assert.deepStrictEqual(decisions('pending', false), ['hold', 'cancel']);
+  assert.deepStrictEqual(decisions('on_hold', true), ['cancel']);
+  assert.deepStrictEqual(decisions('on_hold', false), ['cancel']);
+  assert.deepStrictEqual(decisions('approved', true), []);
+  assert.deepStrictEqual(decisions('cancelled', true), []);
+});
+
 // ---------- Step 1: the handoff ----------
 
 test('approving an RF with a shortage creates a PR for the purchaser', async () => {
@@ -109,7 +146,8 @@ test('an RF with enough stock makes no PR', async () => {
 test('nobody logged in gets 401 on the purchasing routes', async () => {
   for (const [m, u] of [['GET', '/api/purchasing/suppliers'], ['GET', '/api/purchasing/suppliers/1'], ['POST', '/api/purchasing/suppliers'],
     ['PUT', '/api/purchasing/suppliers/1'], ['PUT', '/api/purchasing/suppliers/1/prices/1'], ['GET', '/api/purchasing/prs'],
-    ['GET', '/api/purchasing/prs/1'], ['PUT', '/api/purchasing/prs/1/prices']]) {
+    ['GET', '/api/purchasing/prs/1'], ['PUT', '/api/purchasing/prs/1/prices'], ['POST', '/api/purchasing/prs/1/approve'],
+    ['POST', '/api/purchasing/prs/1/hold'], ['POST', '/api/purchasing/prs/1/cancel']]) {
     assert.strictEqual((await call(m, u)).status, 401, `${m} ${u}`);
   }
 });
@@ -280,16 +318,11 @@ test('saving prices: one supplier for the whole PR, a price on every line, the o
 test('a held PR goes back to pending when the purchaser revises it; a decided PR cannot be priced', async () => {
   const { prId } = await shortagePr([['ACU-001', 1]]);
   const purchaser = await loginAs('purchaser1');
-  const owner = user('owner1');
   const detail = await json(await call('GET', `/api/purchasing/prs/${prId}`, purchaser), 200);
   const body = { supplierId: supplierId(), lines: [{ prLineId: detail.lines[0].PrLineId, unitPriceCentavos: 99900 }] };
   const path = `/api/purchasing/prs/${prId}/prices`;
 
-  // The owner's hold button belongs to the next build step, so put the PR on hold the way that step will.
-  db.run(`UPDATE PurchaseRequisition SET Status = 'on_hold', Reason = 'Price too high', DecidedBy = @by, DecidedAt = datetime('now','localtime')
-          WHERE PurchaseRequisitionId = @prId`, { by: owner.id, prId });
-  db.run(`INSERT INTO StatusHistory (DocType, DocId, FromStatus, ToStatus, ChangedBy, Reason) VALUES ('PR', @prId, 'pending', 'on_hold', @by, 'Price too high')`,
-    { by: owner.id, prId });
+  await json(await decide(await loginAs('owner1'), prId, 'hold', 'Price too high'), 200);
   const held = await json(await call('GET', `/api/purchasing/prs/${prId}`, purchaser), 200);
   assert.deepStrictEqual([held.Status, held.Reason, held.canPrice], ['on_hold', 'Price too high', true]);
 
@@ -310,4 +343,187 @@ test('a held PR goes back to pending when the purchaser revises it; a decided PR
   }
   await json(await call('PUT', '/api/purchasing/prs/99999/prices', purchaser, body), 404);
   await json(await call('PUT', '/api/purchasing/prs/abc/prices', purchaser, body), 400);
+});
+
+// ---------- Step 4: the owner's decision ----------
+
+test('only the owner can approve, hold or cancel a PR', async () => {
+  for (const action of ['approve', 'hold', 'cancel']) {
+    assert.strictEqual((await call('POST', `/api/purchasing/prs/1/${action}`)).status, 401, action);
+    for (const who of ['purchaser1', 'foreman1', 'custodian1', 'verifier1']) {
+      assert.strictEqual((await decide(await loginAs(who), 1, action, 'x')).status, 403, `${who} ${action}`);
+    }
+  }
+});
+
+test('a PR that does not exist is a 404, a broken id is a 400, and the reason is checked first', async () => {
+  const owner = await loginAs('owner1');
+  assert.strictEqual((await decide(owner, 99999, 'approve')).status, 404);
+  assert.strictEqual((await decide(owner, 99999, 'hold', 'x')).status, 404);
+  assert.strictEqual((await decide(owner, 99999, 'cancel', 'x')).status, 404);
+  assert.strictEqual((await decide(owner, 99999, 'hold')).status, 400, 'no reason');
+  assert.strictEqual((await call('POST', '/api/purchasing/prs/abc/approve', owner, {})).status, 400);
+});
+
+test('approve: refused until every line is priced; then the PR is approved, logged, and the right people are told', async () => {
+  const { rf, prId } = await shortagePr([['ACU-001', 2]]);
+  const owner = await loginAs('owner1');
+  const purchaser = await loginAs('purchaser1');
+  const path = `/api/purchasing/prs/${prId}`;
+  const prNumber = prNumberOf(prId);
+  const rfNumber = rfNumberOf(rf.id);
+
+  // Nothing is priced yet: the owner may hold or cancel, not approve.
+  assert.deepStrictEqual((await json(await call('GET', path, owner), 200)).decisions, ['hold', 'cancel']);
+  const early = await decide(owner, prId, 'approve');
+  assert.strictEqual(early.status, 409);
+  assert.match((await early.json()).error, /supplier and a price/);
+  assert.deepStrictEqual(prRow(prId), { Status: 'pending', Reason: null, DecidedBy: null });
+  assert.strictEqual(historyOf(prId).length, 1, 'a refused approval writes nothing');
+
+  await priceIt(prId, purchaser);
+  assert.deepStrictEqual((await json(await call('GET', path, owner), 200)).decisions, ['approve', 'hold', 'cancel']);
+  assert.deepStrictEqual((await json(await call('GET', path, purchaser), 200)).decisions, [], 'the purchaser gets no decision buttons');
+
+  assert.deepStrictEqual(await json(await decide(owner, prId, 'approve'), 200), { id: prId, status: 'approved' });
+
+  const after = await json(await call('GET', path, owner), 200);
+  const ownerName = db.get(`SELECT FullName FROM AppUser WHERE Username = 'owner1'`).FullName;
+  assert.deepStrictEqual([after.Status, after.Reason, after.DecidedByName, after.decisions], ['approved', null, ownerName, []]);
+  assert.strictEqual(prRow(prId).DecidedBy, user('owner1').id);
+  assert.deepStrictEqual(historyOf(prId), [
+    { FromStatus: null, ToStatus: 'pending', Reason: null },
+    { FromStatus: 'pending', ToStatus: 'approved', Reason: null },
+  ]);
+
+  // The purchaser is told on the PR page. The foreman is told on the RF page (he cannot open the PR page), with no money in it.
+  const toPurchaser = notices('purchaser1', `${prNumber} was approved%`);
+  assert.deepStrictEqual(toPurchaser.map((n) => ({ ...n })), [{ Message: `${prNumber} was approved.`, LinkUrl: `/pr.html?id=${prId}` }]);
+  const toForeman = notices('foreman1', `${prNumber} for%`);
+  assert.deepStrictEqual(toForeman.map((n) => ({ ...n })), [{ Message: `${prNumber} for ${rfNumber} was approved.`, LinkUrl: `/requisition.html?id=${rf.id}` }]);
+  assert.strictEqual(notices('owner1', `${prNumber} was%`).length, 0, 'the owner is not told about his own decision');
+
+  // A decided PR cannot be decided again, and the purchaser can no longer change the prices.
+  for (const action of ['approve', 'hold', 'cancel']) {
+    const res = await decide(owner, prId, action, 'Changed my mind');
+    assert.strictEqual(res.status, 409, action);
+    assert.match((await res.json()).error, /is approved/, action);
+  }
+  const body = { supplierId: supplierId(), lines: [{ prLineId: after.lines[0].PrLineId, unitPriceCentavos: 1 }] };
+  await json(await call('PUT', `${path}/prices`, purchaser, body), 409);
+  assert.strictEqual(prRow(prId).Status, 'approved');
+  assert.strictEqual(historyOf(prId).length, 2, 'the refused decisions wrote nothing');
+});
+
+test('hold: needs a reason, the purchaser hears it and the foreman does not, and a revised PR can then be approved', async () => {
+  const { rf, prId } = await shortagePr([['ACU-001', 1]]);
+  const owner = await loginAs('owner1');
+  const purchaser = await loginAs('purchaser1');
+  const path = `/api/purchasing/prs/${prId}`;
+  const prNumber = prNumberOf(prId);
+  const rfNumber = rfNumberOf(rf.id);
+  const told = () => notices('purchaser1', `${prNumber}%`).length + notices('foreman1', `${prNumber}%`).length;
+
+  // No reason, or a bad one: nothing changes and nobody is told.
+  const toldBefore = told();
+  for (const bad of [undefined, '', '   ', 'x'.repeat(301)]) {
+    const res = await decide(owner, prId, 'hold', bad);
+    assert.strictEqual(res.status, 400, String(bad).slice(0, 10));
+    assert.match((await res.json()).error, /reason/i);
+  }
+  assert.deepStrictEqual(prRow(prId), { Status: 'pending', Reason: null, DecidedBy: null });
+  assert.strictEqual(told(), toldBefore);
+
+  // Holding works on a PR that is not priced yet.
+  assert.deepStrictEqual(await json(await decide(owner, prId, 'hold', '  Wait for a second quote  '), 200), { id: prId, status: 'on_hold' });
+  const held = await json(await call('GET', path, owner), 200);
+  assert.deepStrictEqual([held.Status, held.Reason, held.decisions], ['on_hold', 'Wait for a second quote', ['cancel']]);
+  assert.strictEqual((await json(await call('GET', path, purchaser), 200)).canPrice, true, 'the purchaser can revise a held PR');
+
+  assert.deepStrictEqual(notices('purchaser1', `${prNumber} was put on hold%`).map((n) => ({ ...n })),
+    [{ Message: `${prNumber} was put on hold: Wait for a second quote`, LinkUrl: `/pr.html?id=${prId}` }]);
+  const toForeman = notices('foreman1', `${prNumber} for%`);
+  assert.deepStrictEqual(toForeman.map((n) => ({ ...n })), [{ Message: `${prNumber} for ${rfNumber} was put on hold.`, LinkUrl: `/requisition.html?id=${rf.id}` }]);
+  assert.ok(!toForeman[0].Message.includes('second quote'), 'the reason stays between the owner and the purchaser');
+
+  // A held PR cannot be held or approved again, and cannot be approved while it is held.
+  for (const action of ['hold', 'approve']) {
+    const res = await decide(owner, prId, action, 'again');
+    assert.strictEqual(res.status, 409, action);
+    assert.match((await res.json()).error, /is on hold/, action);
+  }
+
+  // The purchaser revises it, it goes back to pending, and the owner approves it.
+  await priceIt(prId, purchaser);
+  const revised = await json(await call('GET', path, owner), 200);
+  assert.deepStrictEqual([revised.Status, revised.Reason, revised.DecidedByName, revised.decisions], ['pending', null, null, ['approve', 'hold', 'cancel']]);
+  await json(await decide(owner, prId, 'approve'), 200);
+  assert.deepStrictEqual(historyOf(prId), [
+    { FromStatus: null, ToStatus: 'pending', Reason: null },
+    { FromStatus: 'pending', ToStatus: 'on_hold', Reason: 'Wait for a second quote' },
+    { FromStatus: 'on_hold', ToStatus: 'pending', Reason: 'Revised and resubmitted' },
+    { FromStatus: 'pending', ToStatus: 'approved', Reason: null },
+  ]);
+});
+
+test('cancel: needs a reason, works on a pending or a held PR, refuses a decided one, and leaves the RF alone', async () => {
+  const owner = await loginAs('owner1');
+  const purchaser = await loginAs('purchaser1');
+  const foreman = await loginAs('foreman1');
+
+  // A pending PR.
+  const a = await shortagePr([['ACU-001', 1]]);
+  const prNumber = prNumberOf(a.prId);
+  const rfNumber = rfNumberOf(a.rf.id);
+  const rfState = () => ({
+    rf: { ...db.get('SELECT Status FROM Requisition WHERE RequisitionId = @id', { id: a.rf.id }) },
+    lines: db.all('SELECT ItemId, Quantity, QtyReserved FROM RequisitionLine WHERE RequisitionId = @id', { id: a.rf.id }).map((l) => ({ ...l })),
+  });
+  const rfBefore = rfState();
+
+  assert.strictEqual((await decide(owner, a.prId, 'cancel')).status, 400, 'no reason');
+  assert.strictEqual(prRow(a.prId).Status, 'pending');
+  assert.deepStrictEqual(await json(await decide(owner, a.prId, 'cancel', 'Not needed any more'), 200), { id: a.prId, status: 'cancelled' });
+
+  const cancelled = await json(await call('GET', `/api/purchasing/prs/${a.prId}`, owner), 200);
+  assert.deepStrictEqual([cancelled.Status, cancelled.Reason, cancelled.decisions], ['cancelled', 'Not needed any more', []]);
+  assert.deepStrictEqual(historyOf(a.prId), [
+    { FromStatus: null, ToStatus: 'pending', Reason: null },
+    { FromStatus: 'pending', ToStatus: 'cancelled', Reason: 'Not needed any more' },
+  ]);
+  assert.deepStrictEqual(notices('purchaser1', `${prNumber} was cancelled%`).map((n) => n.Message), [`${prNumber} was cancelled: Not needed any more`]);
+  assert.deepStrictEqual(notices('foreman1', `${prNumber} for%`).map((n) => n.Message), [`${prNumber} for ${rfNumber} was cancelled.`]);
+
+  for (const action of ['approve', 'hold', 'cancel']) {
+    const res = await decide(owner, a.prId, action, 'x');
+    assert.strictEqual(res.status, 409, action);
+    assert.match((await res.json()).error, /is cancelled/, action);
+  }
+  const body = { supplierId: supplierId(), lines: [{ prLineId: cancelled.lines[0].PrLineId, unitPriceCentavos: 5 }] };
+  await json(await call('PUT', `/api/purchasing/prs/${a.prId}/prices`, purchaser, body), 409);
+  assert.strictEqual((await json(await call('GET', `/api/purchasing/prs/${a.prId}`, purchaser), 200)).canPrice, false);
+
+  // The RF is untouched: same status, same lines, and the Document Trail shows the PR as cancelled (number and status only).
+  assert.deepStrictEqual(rfState(), rfBefore);
+  const trail = await json(await call('GET', `/api/requisitions/${a.rf.id}`, foreman), 200);
+  assert.deepStrictEqual(trail.purchaseRequisitions, [{ PrNumber: prNumber, Status: 'cancelled' }]);
+
+  // A held PR can be cancelled too. Its first reason stays in the history.
+  const b = await shortagePr([['ACU-001', 1]]);
+  await json(await decide(owner, b.prId, 'hold', 'Wait for the next quote'), 200);
+  await json(await decide(owner, b.prId, 'cancel', 'The quote came back too high'), 200);
+  const heldThenCancelled = await json(await call('GET', `/api/purchasing/prs/${b.prId}`, owner), 200);
+  assert.deepStrictEqual([heldThenCancelled.Status, heldThenCancelled.Reason], ['cancelled', 'The quote came back too high']);
+  assert.deepStrictEqual(historyOf(b.prId), [
+    { FromStatus: null, ToStatus: 'pending', Reason: null },
+    { FromStatus: 'pending', ToStatus: 'on_hold', Reason: 'Wait for the next quote' },
+    { FromStatus: 'on_hold', ToStatus: 'cancelled', Reason: 'The quote came back too high' },
+  ]);
+
+  // An approved PR cannot be cancelled.
+  const c = await shortagePr([['ACU-001', 1]]);
+  await priceIt(c.prId, purchaser);
+  await json(await decide(owner, c.prId, 'approve'), 200);
+  assert.strictEqual((await decide(owner, c.prId, 'cancel', 'x')).status, 409);
+  assert.strictEqual(prRow(c.prId).Status, 'approved');
 });

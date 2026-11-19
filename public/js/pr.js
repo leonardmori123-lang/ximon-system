@@ -140,6 +140,68 @@ function pricingForm(pr, suppliers) {
       pr.Status === 'on_hold' ? 'Save and send back for approval' : 'Save prices'));
 }
 
+// The owner's decision. Approving needs no reason; putting on hold and cancelling do.
+// pr.decisions lists the buttons that make sense for this status, so the server and the screen agree.
+function decisionPanel(pr) {
+  if (!pr.decisions || pr.decisions.length === 0) return null;
+  const can = (action) => pr.decisions.includes(action);
+  const reason = h('textarea', {
+    class: 'form-control', id: 'decision-reason', rows: 2, maxLength: 300,
+    placeholder: 'Reason, required to put on hold or cancel',
+  });
+  const formError = h('p', { class: 'status-bad small mt-3 mb-0', role: 'alert', hidden: true });
+
+  async function decide(action, { reasonNeeded, confirmText, done }) {
+    showError(formError, '');
+    showError(errorBox, '');
+    const text = reason.value.trim();
+    if (reasonNeeded && !text) { showError(formError, 'Write the reason first.'); return; }
+    if (confirmText && !window.confirm(confirmText)) return;
+    try {
+      await api(`/api/purchasing/prs/${id}/${action}`, { method: 'POST', body: reasonNeeded ? { reason: text } : {} });
+      flash = done;
+      await load();
+    } catch (err) {
+      showError(formError, err.message);
+    }
+  }
+
+  let intro = 'Check the supplier, the prices and the total, then decide.';
+  if (pr.Status === 'on_hold') {
+    intro = 'This purchase requisition is on hold. The purchaser can revise it and send it back for approval, or you can cancel it.';
+  } else if (!can('approve')) {
+    intro = 'The purchaser has not saved a supplier and prices yet, so it cannot be approved. You can still put it on hold or cancel it.';
+  }
+
+  return h('div', { class: 'panel p-3 mt-4' },
+    h('h2', { class: 'h6' }, 'Your decision'),
+    h('p', { class: 'hint' }, intro),
+    can('approve') ? h('div', { class: 'mb-3' },
+      h('button', {
+        class: 'btn btn-success', type: 'button',
+        onclick: () => decide('approve', {
+          confirmText: `Approve ${pr.PrNumber}? The total is PHP ${pesos(pr.TotalCentavos)}.`,
+          done: 'Approved. The purchaser has been notified.',
+        }),
+      }, 'Approve')) : null,
+    h('label', { class: 'form-label', htmlFor: 'decision-reason' }, 'Reason'),
+    reason,
+    h('div', { class: 'd-flex flex-wrap gap-2 mt-2' },
+      can('hold') ? h('button', {
+        class: 'btn btn-outline-secondary', type: 'button',
+        onclick: () => decide('hold', { reasonNeeded: true, done: 'Put on hold. The purchaser has been notified.' }),
+      }, 'Put on hold') : null,
+      can('cancel') ? h('button', {
+        class: 'btn btn-outline-danger', type: 'button',
+        onclick: () => decide('cancel', {
+          reasonNeeded: true,
+          confirmText: `Cancel ${pr.PrNumber}? It stays on file but cannot be reopened. The shortage on the RF stays.`,
+          done: 'Cancelled. The purchaser has been notified.',
+        }),
+      }, 'Cancel purchase requisition') : null),
+    formError);
+}
+
 function historyTable(pr) {
   return h('div', null,
     h('h2', { class: 'h6 mt-4' }, 'History'),
@@ -165,6 +227,7 @@ async function load() {
       flash ? h('p', { class: 'status-ok', role: 'status' }, flash) : null,
       h('div', { class: 'panel p-3' }, info(pr)),
       pr.canPrice ? pricingForm(pr, suppliers) : linesTable(pr),
+      decisionPanel(pr),
       historyTable(pr),
     ].filter(Boolean));
     flash = '';

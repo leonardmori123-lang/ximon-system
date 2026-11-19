@@ -3,9 +3,10 @@
 const db = require('../db');
 const { HttpError } = require('./errors');
 const { addDocHistory, getDocHistory } = require('./history');
-const { notifyRole } = require('./notifications');
+const { notifyUser, notifyRole } = require('./notifications');
 const {
-  PR_STATUSES, PRICEABLE_STATUSES, validateSupplierInput, checkUnitPrice, validatePriceLines, lineTotal, prTotal,
+  PR_STATUSES, PRICEABLE_STATUSES, DECISIONS, validateSupplierInput, checkUnitPrice, validatePriceLines, lineTotal, prTotal,
+  checkReason, ownerDecisions,
 } = require('./purchasingRules');
 
 // ---------- Suppliers ----------
@@ -151,14 +152,17 @@ function getPr(user, id) {
 
   // One supplier for the whole PR: the save below sets the same supplier on every line.
   const supplierLine = lines.find((l) => l.SupplierId != null);
+  const total = prTotal(lines); // null while any line has no price
   return {
     ...pr,
     SupplierId: supplierLine ? supplierLine.SupplierId : null,
     SupplierName: supplierLine ? supplierLine.SupplierName : null,
-    TotalCentavos: prTotal(lines),
+    TotalCentavos: total,
     lines,
     history: getDocHistory('PR', id),
     canPrice: user.role === 'purchaser' && PRICEABLE_STATUSES.includes(pr.Status),
+    // The buttons the owner may press now: some of 'approve', 'hold', 'cancel'. Nobody else gets any.
+    decisions: user.role === 'owner' ? ownerDecisions(pr.Status, total !== null) : [],
   };
 }
 
@@ -212,7 +216,58 @@ function savePrices(user, id, body) {
   });
 }
 
+// ---------- The owner's decision ----------
+
+// action is 'approve', 'hold' or 'cancel'. Hold and cancel need body.reason.
+// Approve and hold work on a pending PR, cancel on a pending or a held one. Approve also needs a
+// supplier and a price on every line. A held PR comes back through savePrices above.
+// The foreman who asked for the RF is told the result, without the reason and without any money.
+function decidePr(user, id, action, body) {
+  const rule = DECISIONS[action];
+  const reason = rule.needsReason ? checkReason((body || {}).reason, action) : null;
+
+  return db.transaction(() => {
+    const pr = db.get(
+      `SELECT pr.PrNumber, pr.Status, pr.RequisitionId, r.RfNumber, r.RequestedBy
+       FROM PurchaseRequisition pr LEFT JOIN Requisition r ON r.RequisitionId = pr.RequisitionId
+       WHERE pr.PurchaseRequisitionId = @id`,
+      { id }
+    );
+    if (!pr) throw new HttpError(404, 'Purchase requisition not found.');
+    if (!rule.from.includes(pr.Status)) {
+      throw new HttpError(409, `This purchase requisition is ${pr.Status.replace('_', ' ')}, so it cannot be ${rule.done}.`);
+    }
+    if (action === 'approve') {
+      const count = db.get(
+        'SELECT COUNT(*) AS lines, COUNT(UnitPriceCentavos) AS priced FROM PRLine WHERE PurchaseRequisitionId = @id',
+        { id }
+      );
+      if (count.lines === 0 || count.priced < count.lines) {
+        throw new HttpError(409, 'The purchaser has not saved a supplier and a price for every line yet, so it cannot be approved.');
+      }
+    }
+
+    const { changes } = db.run(
+      `UPDATE PurchaseRequisition
+       SET Status = @to, Reason = @reason, DecidedBy = @userId,
+           DecidedAt = datetime('now','localtime'), UpdatedAt = datetime('now','localtime')
+       WHERE PurchaseRequisitionId = @id AND Status = @from`,
+      { to: rule.to, reason, userId: user.id, id, from: pr.Status }
+    );
+    if (changes === 0) throw new HttpError(409, 'This purchase requisition changed. Open it again.');
+    addDocHistory('PR', id, pr.Status, rule.to, user.id, reason);
+
+    // The purchasers hear the reason. The requestor hears only the outcome, on the RF page (the foreman cannot open the PR page).
+    const outcome = { approve: 'was approved.', hold: `was put on hold: ${reason}`, cancel: `was cancelled: ${reason}` }[action];
+    notifyRole('purchaser', `${pr.PrNumber} ${outcome}`, prLink(id));
+    if (pr.RequestedBy) {
+      notifyUser(pr.RequestedBy, `${pr.PrNumber} for ${pr.RfNumber} was ${rule.done}.`, `/requisition.html?id=${pr.RequisitionId}`);
+    }
+    return { id, status: rule.to };
+  });
+}
+
 module.exports = {
   listSuppliers, getSupplier, createSupplier, updateSupplier, saveSupplierPrice,
-  listPrs, getPr, savePrices,
+  listPrs, getPr, savePrices, decidePr,
 };

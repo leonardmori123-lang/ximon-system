@@ -6,6 +6,15 @@ const PR_STATUSES = ['pending', 'approved', 'on_hold', 'cancelled'];
 // The purchaser can change the supplier and prices only while the owner has not approved.
 const PRICEABLE_STATUSES = ['pending', 'on_hold'];
 const MAX_PRICE_CENTAVOS = 1000000000; // PHP 10,000,000 for one unit
+const MAX_REASON_LENGTH = 300; // same limit as the reason for returning an RF
+
+// The owner's three decisions: where each may start, where it ends, and whether it needs a reason.
+// "done" is the word used in messages ("it cannot be approved").
+const DECISIONS = {
+  approve: { from: ['pending'], to: 'approved', needsReason: false, done: 'approved' },
+  hold: { from: ['pending'], to: 'on_hold', needsReason: true, done: 'put on hold' },
+  cancel: { from: ['pending', 'on_hold'], to: 'cancelled', needsReason: true, done: 'cancelled' },
+};
 
 // Turns an empty text into null, and refuses text longer than the limit.
 function optionalText(value, max, label) {
@@ -75,7 +84,24 @@ function prTotal(lines) {
   return lines.reduce((sum, l) => sum + lineTotal(l.ShortQty, l.UnitPriceCentavos), 0);
 }
 
+// The reason for holding or cancelling: required, trimmed, up to 300 characters.
+function checkReason(value, action) {
+  const reason = String(value == null ? '' : value).trim();
+  if (!reason || reason.length > MAX_REASON_LENGTH) {
+    const what = action === 'hold' ? 'putting it on hold' : 'cancelling it';
+    throw new HttpError(400, `Write the reason for ${what}, up to ${MAX_REASON_LENGTH} characters.`);
+  }
+  return reason;
+}
+
+// Which decisions the owner can take on a purchase requisition right now.
+// Approve needs a supplier and a price on every line (isPriced), so the screen can hide the button
+// and the route can refuse it.
+function ownerDecisions(status, isPriced) {
+  return Object.keys(DECISIONS).filter((action) => DECISIONS[action].from.includes(status) && (action !== 'approve' || isPriced));
+}
+
 module.exports = {
-  PR_STATUSES, PRICEABLE_STATUSES, MAX_PRICE_CENTAVOS,
-  validateSupplierInput, checkUnitPrice, validatePriceLines, lineTotal, prTotal,
+  PR_STATUSES, PRICEABLE_STATUSES, MAX_PRICE_CENTAVOS, MAX_REASON_LENGTH, DECISIONS,
+  validateSupplierInput, checkUnitPrice, validatePriceLines, lineTotal, prTotal, checkReason, ownerDecisions,
 };
