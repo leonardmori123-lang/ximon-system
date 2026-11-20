@@ -86,6 +86,20 @@ function prTotal(lines) {
   return lines.reduce((sum, l) => sum + lineTotal(l.ShortQty, l.UnitPriceCentavos), 0);
 }
 
+// The budget check for one PR. budgetCentavos is the project's material budget (0 means none was set, so
+// nothing is checked). committedCentavos is what the budget is already promised to, without this PR.
+// The PR is over budget when committed + this PR goes above the budget.
+function budgetCheck(budgetCentavos, committedCentavos, prTotalCentavos) {
+  const budgetSet = budgetCentavos > 0;
+  const remainingCentavos = budgetCentavos - committedCentavos;
+  const overByCentavos = budgetSet && prTotalCentavos != null ? Math.max(0, prTotalCentavos - remainingCentavos) : 0;
+  return {
+    budgetSet, budgetCentavos, committedCentavos, remainingCentavos,
+    prTotalCentavos: prTotalCentavos == null ? null : prTotalCentavos,
+    overByCentavos, overBudget: overByCentavos > 0,
+  };
+}
+
 // The reason for holding or cancelling: required, trimmed, up to 300 characters.
 function checkReason(value, action) {
   const reason = String(value == null ? '' : value).trim();
@@ -162,6 +176,6 @@ function poTotals(lineTotals, discountPercent) {
 
 module.exports = {
   PR_STATUSES, PO_STATUSES, PRICEABLE_STATUSES, MAX_PRICE_CENTAVOS, MAX_REASON_LENGTH, DECISIONS,
-  validateSupplierInput, checkUnitPrice, validatePriceLines, lineTotal, prTotal, checkReason, ownerDecisions,
+  validateSupplierInput, checkUnitPrice, validatePriceLines, lineTotal, prTotal, budgetCheck, checkReason, ownerDecisions,
   validatePoInput, defaultDeliveryDate, poDiscount, poTotals,
 };

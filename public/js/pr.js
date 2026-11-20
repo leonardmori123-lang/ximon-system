@@ -202,6 +202,25 @@ function decisionPanel(pr) {
     formError);
 }
 
+// The budget check, shown to the purchaser and the owner while the owner still has to decide.
+function budgetPanel(pr) {
+  const b = pr.budget;
+  if (!b) return null;
+  if (!b.budgetSet) return h('p', { class: 'hint mt-3' }, 'No material budget is set for this project, so nothing is checked.');
+  const row = (label, value) => h('tr', null, h('td', null, label), h('td', { class: 'num' }, value));
+  return h('div', { class: 'panel p-3 mt-4' },
+    h('h2', { class: 'h6' }, 'Project budget'),
+    h('table', { class: 'table mb-0', style: 'max-width: 32rem;' },
+      h('tbody', null,
+        row('Material budget (PHP)', pesos(b.budgetCentavos)),
+        row('Already promised: POs made and approved PRs (PHP)', pesos(b.committedCentavos)),
+        row('Left before this PR (PHP)', pesos(b.remainingCentavos)),
+        row('This PR (PHP)', pesos(b.prTotalCentavos)))),
+    b.overBudget
+      ? h('p', { class: 'status-bad fw-semibold mt-3 mb-0', role: 'status' }, `Over budget by PHP ${pesos(b.overByCentavos)}.`)
+      : h('p', { class: 'status-ok mt-3 mb-0', role: 'status' }, 'Within the budget.'));
+}
+
 // Shown to both roles once the PO exists.
 function poPanel(pr) {
   if (!pr.po) return null;
@@ -309,6 +328,7 @@ async function load() {
       h('div', { class: 'panel p-3' }, info(pr)),
       poPanel(pr),
       pr.canPrice ? pricingForm(pr, suppliers) : linesTable(pr),
+      budgetPanel(pr),
       pr.canMakePo ? poForm(pr) : null,
       decisionPanel(pr),
       historyTable(pr),

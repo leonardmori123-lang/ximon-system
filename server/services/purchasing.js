@@ -8,7 +8,7 @@ const { nextNumber } = require('./numbering');
 const { notifyUser, notifyRole } = require('./notifications');
 const {
   PR_STATUSES, PO_STATUSES, PRICEABLE_STATUSES, DECISIONS, validateSupplierInput, checkUnitPrice, validatePriceLines, lineTotal, prTotal,
-  checkReason, ownerDecisions, validatePoInput, defaultDeliveryDate, poTotals,
+  budgetCheck, checkReason, ownerDecisions, validatePoInput, defaultDeliveryDate, poTotals,
 } = require('./purchasingRules');
 
 // ---------- Suppliers ----------
@@ -103,11 +103,35 @@ function saveSupplierPrice(supplierId, itemId, unitPriceCentavos) {
 
 const prLink = (id) => `/pr.html?id=${id}`;
 
+// A PR the owner still has to decide on. Only these get a live budget check.
+const OPEN_FOR_DECISION = ['pending', 'on_hold'];
+
+// What a project's budget is already promised to: every PO made for the project, delivered or not, and
+// every approved PR that has no PO yet. A PR still waiting for the owner is not counted, so the PR being
+// checked never counts itself.
+function committedCentavos(projectId) {
+  const pos = db.get('SELECT COALESCE(SUM(TotalCentavos), 0) AS total FROM PurchaseOrder WHERE ProjectId = @projectId', { projectId }).total;
+  const waiting = db.all(
+    `SELECT l.ShortQty, l.UnitPriceCentavos
+     FROM PRLine l JOIN PurchaseRequisition pr ON pr.PurchaseRequisitionId = l.PurchaseRequisitionId
+     WHERE pr.ProjectId = @projectId AND pr.Status = 'approved'
+       AND NOT EXISTS (SELECT 1 FROM PurchaseOrder po WHERE po.PurchaseRequisitionId = pr.PurchaseRequisitionId)`,
+    { projectId }
+  );
+  return pos + waiting.reduce((sum, l) => sum + (l.UnitPriceCentavos == null ? 0 : lineTotal(l.ShortQty, l.UnitPriceCentavos)), 0);
+}
+
+// The budget check for a PR of this project, with its total as the PR stands now.
+function projectBudgetCheck(projectId, prTotalCentavos) {
+  const project = db.get('SELECT MaterialBudgetCentavos AS budget FROM Project WHERE ProjectId = @projectId', { projectId });
+  return budgetCheck(project.budget, committedCentavos(projectId), prTotalCentavos);
+}
+
 // The RF number comes from a join, so the purchaser never needs the RF routes (those are closed to the purchaser).
 function listPrs(status) {
   if (status && !PR_STATUSES.includes(status)) throw new HttpError(400, 'Unknown status.');
-  return db.all(
-    `SELECT pr.PurchaseRequisitionId, pr.PrNumber, pr.Status, r.RfNumber,
+  const rows = db.all(
+    `SELECT pr.PurchaseRequisitionId, pr.PrNumber, pr.Status, pr.OverBudget, r.RfNumber, pr.ProjectId,
             p.Code AS ProjectCode, p.Name AS ProjectName, substr(pr.CreatedAt, 1, 16) AS CreatedAt,
             COUNT(l.PrLineId) AS LineCount, COUNT(l.UnitPriceCentavos) AS PricedCount,
             MAX(s.Name) AS SupplierName,
@@ -122,6 +146,13 @@ function listPrs(status) {
      GROUP BY pr.PurchaseRequisitionId ORDER BY pr.PurchaseRequisitionId DESC`,
     status ? { status } : {}
   );
+  // OverBudget: live for a PR still waiting for the owner, as saved for one he already decided.
+  return rows.map((row) => ({
+    ...row,
+    OverBudget: OPEN_FOR_DECISION.includes(row.Status) && row.TotalCentavos != null
+      ? projectBudgetCheck(row.ProjectId, row.TotalCentavos).overBudget
+      : row.OverBudget === 1,
+  }));
 }
 
 function getPr(user, id) {
@@ -156,6 +187,9 @@ function getPr(user, id) {
   const supplierLine = lines.find((l) => l.SupplierId != null);
   const total = prTotal(lines); // null while any line has no price
 
+  // The budget check, while the owner still has to decide and every line is priced.
+  const budget = OPEN_FOR_DECISION.includes(pr.Status) && total !== null ? projectBudgetCheck(pr.ProjectId, total) : null;
+
   // The PO made from this PR, if any. Both roles may see the link to it.
   const po = db.get('SELECT PurchaseOrderId, PoNumber, Status FROM PurchaseOrder WHERE PurchaseRequisitionId = @id', { id });
   // The purchaser can make the PO when the PR is approved, fully priced and has none yet.
@@ -177,6 +211,7 @@ function getPr(user, id) {
     SupplierId: supplierLine ? supplierLine.SupplierId : null,
     SupplierName: supplierLine ? supplierLine.SupplierName : null,
     TotalCentavos: total,
+    budget,
     lines,
     history: getDocHistory('PR', id),
     po: po ? { ...po } : null,
@@ -197,7 +232,7 @@ function savePrices(user, id, body) {
   if (!Number.isInteger(supplierId) || supplierId <= 0) throw new HttpError(400, 'Choose a supplier.');
 
   return db.transaction(() => {
-    const pr = db.get('SELECT PrNumber, Status FROM PurchaseRequisition WHERE PurchaseRequisitionId = @id', { id });
+    const pr = db.get('SELECT PrNumber, Status, ProjectId FROM PurchaseRequisition WHERE PurchaseRequisitionId = @id', { id });
     if (!pr) throw new HttpError(404, 'Purchase requisition not found.');
     if (!PRICEABLE_STATUSES.includes(pr.Status)) {
       throw new HttpError(409, `This purchase requisition is ${pr.Status.replace('_', ' ')}, so its prices cannot be changed.`);
@@ -231,9 +266,11 @@ function savePrices(user, id, body) {
       db.run(`UPDATE PurchaseRequisition SET UpdatedAt = datetime('now','localtime') WHERE PurchaseRequisitionId = @id`, { id });
     }
 
-    notifyRole('owner', wasHeld
+    const saved = db.all('SELECT ShortQty, UnitPriceCentavos FROM PRLine WHERE PurchaseRequisitionId = @id', { id });
+    const overBudget = projectBudgetCheck(pr.ProjectId, prTotal(saved)).overBudget;
+    notifyRole('owner', (wasHeld
       ? `${pr.PrNumber} was revised and needs your decision again.`
-      : `${pr.PrNumber} has a supplier and prices and needs your approval.`, prLink(id));
+      : `${pr.PrNumber} has a supplier and prices and needs your approval.`) + (overBudget ? ' It is over the project budget.' : ''), prLink(id));
     return { id, status: 'pending' };
   });
 }

@@ -15,7 +15,7 @@ async function load() {
       h('td', null, p.SupplierName || ''),
       h('td', { class: 'num' }, `${p.PricedCount} of ${p.LineCount}`),
       h('td', { class: 'num' }, p.TotalCentavos == null ? '' : pesos(p.TotalCentavos)),
-      h('td', null, prBadge(p.Status)),
+      h('td', null, prBadge(p.Status), p.OverBudget ? h('span', { class: 'badge text-bg-danger ms-1' }, 'Over budget') : null),
       h('td', null, p.CreatedAt))));
     empty.hidden = list.length > 0;
   } catch (err) {

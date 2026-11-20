@@ -46,6 +46,7 @@ Test users (password is `SEED_PASSWORD` from `.env`, default `ximon123`): `owner
 - Always pass values as named parameters: `db.get('SELECT * FROM Item WHERE Code = @code', { code })`. Never join values into the SQL text. Only pass the parameters the SQL uses.
 - Round every update to money or quantities with `ROUND(x, 2)`, and round every `SUM(...)` too (`ROUND(SUM(Quantity), 2)`), or 0.1 + 0.2 shows up as 0.30000000000000004.
 - Do several changes together inside `db.transaction(() => { ... })`. If anything throws, all of it is undone.
+- Remaining budget: `Project.MaterialBudgetCentavos` minus what it is already promised to, which is every PO made for the project (delivered or not) and every approved PR that has no PO yet. A budget of 0 means none is set, so nothing is checked. A PR is over budget when what is promised plus the PR's total is above the budget. The check only needs to be live while the owner still has to decide (pending or on hold). Stock issued from the warehouse is not counted, because items have no cost.
 - Change shared files (`server/db.js`, `server/auth.js`, the page layout) only after telling the other members.
 
 ## Handoff functions (agree names and inputs, then write them here)

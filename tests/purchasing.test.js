@@ -853,3 +853,105 @@ test('the PO form preview does the same discount sum as the server, for every pe
   assert.deepStrictEqual(['', '0', '58', ' 12.5 ', '100', '0.57'].map(ui.toPercent), [0, 0, 58, 12.5, 100, 0.57]);
   for (const bad of ['100.01', '12.345', '-1', 'abc', '1,5', '5%']) assert.strictEqual(ui.toPercent(bad), null, bad);
 });
+
+// ---------- Step 6: the budget check ----------
+
+test('budget rule: over only when what is promised plus this PR goes above the budget; 0 means no budget', () => {
+  const check = (...args) => ({ ...rules.budgetCheck(...args) });
+  assert.deepStrictEqual(check(100000, 0, 100000), {
+    budgetSet: true, budgetCentavos: 100000, committedCentavos: 0, remainingCentavos: 100000, prTotalCentavos: 100000, overByCentavos: 0, overBudget: false,
+  });
+  assert.deepStrictEqual([check(100000, 0, 100001).overByCentavos, check(100000, 0, 100001).overBudget], [1, true], 'one centavo over');
+  assert.deepStrictEqual([check(100000, 60000, 50000).remainingCentavos, check(100000, 60000, 50000).overByCentavos], [40000, 10000]);
+  assert.deepStrictEqual([check(100000, 120000, 1).remainingCentavos, check(100000, 120000, 1).overByCentavos], [-20000, 20001], 'already overspent');
+  assert.deepStrictEqual([check(0, 0, 999999).budgetSet, check(0, 0, 999999).overBudget], [false, false], 'no budget set, nothing to check');
+  assert.deepStrictEqual([check(100000, 0, null).prTotalCentavos, check(100000, 0, null).overBudget], [null, false], 'unpriced PR');
+});
+
+let budgetProjects = 0;
+const budgetProject = (budgetCentavos) => {
+  const code = `BUD-${++budgetProjects}`;
+  db.run('INSERT INTO Project (Code, Name, MaterialBudgetCentavos) VALUES (@code, @name, @budgetCentavos)', { code, name: `Budget test ${budgetProjects}`, budgetCentavos });
+  return db.get('SELECT ProjectId AS id FROM Project WHERE Code = @code', { code }).id;
+};
+// A one-line ACU-001 PR on that project, priced at one price (so its total is that price), left pending.
+async function pricedPrOn(project, unitPriceCentavos) {
+  const { prNumber } = db.transaction(() => createPurchaseRequisition({
+    requisitionId: null, rfNumber: 'RF-BUDGET', projectId: project, userId: user('owner1').id, lines: [{ itemId: itemId('ACU-001'), shortQty: 1 }],
+  }));
+  const prId = db.get('SELECT PurchaseRequisitionId AS id FROM PurchaseRequisition WHERE PrNumber = @prNumber', { prNumber }).id;
+  await priceIt(prId, await loginAs('purchaser1'), unitPriceCentavos);
+  return prId;
+}
+
+test('budget check: a PO counts, an approved PR waiting for its PO counts, pending and cancelled PRs do not, and it follows the prices', async () => {
+  const purchaser = await loginAs('purchaser1');
+  const owner = await loginAs('owner1');
+  const project = budgetProject(100000); // PHP 1,000.00
+  const budgetOf = async (cookie, prId) => ({ ...(await json(await call('GET', `/api/purchasing/prs/${prId}`, cookie), 200)).budget });
+  const listed = async (prId) => (await json(await call('GET', '/api/purchasing/prs', purchaser), 200)).find((p) => p.PurchaseRequisitionId === prId);
+
+  // A: PHP 600.00 on a PHP 1,000.00 budget, nothing promised yet.
+  const a = await pricedPrOn(project, 60000);
+  for (const cookie of [purchaser, owner]) {
+    assert.deepStrictEqual(await budgetOf(cookie, a), {
+      budgetSet: true, budgetCentavos: 100000, committedCentavos: 0, remainingCentavos: 100000, prTotalCentavos: 60000, overByCentavos: 0, overBudget: false,
+    });
+  }
+  assert.strictEqual((await listed(a)).OverBudget, false);
+  assert.ok(!notices('owner1', `${prNumberOf(a)}%needs your approval%`)[0].Message.includes('budget'), 'no budget warning for A');
+
+  // A approved: it is promised, and its own page stops showing the live check.
+  await json(await decide(owner, a, 'approve'), 200);
+  assert.strictEqual((await json(await call('GET', `/api/purchasing/prs/${a}`, owner), 200)).budget, null);
+
+  // B: PHP 500.00 more. 600 is promised, 400 is left, so B is over by 100.00. The list and the owner's notice say so.
+  const b = await pricedPrOn(project, 50000);
+  assert.deepStrictEqual(await budgetOf(owner, b), {
+    budgetSet: true, budgetCentavos: 100000, committedCentavos: 60000, remainingCentavos: 40000, prTotalCentavos: 50000, overByCentavos: 10000, overBudget: true,
+  });
+  assert.strictEqual((await listed(b)).OverBudget, true);
+  assert.strictEqual((await listed(a)).OverBudget, false);
+  assert.strictEqual(notices('owner1', `${prNumberOf(b)}%needs your approval%`)[0].Message, `${prNumberOf(b)} has a supplier and prices and needs your approval. It is over the project budget.`);
+
+  // The PO for A, with 10% off, is PHP 540.00. The PO total is what counts now, not the PR total.
+  await json(await makePo(purchaser, a, { discountPercent: 10 }), 201);
+  assert.deepStrictEqual([(await budgetOf(owner, b)).committedCentavos, (await budgetOf(owner, b)).overByCentavos], [54000, 4000]);
+
+  // A pending PR and a cancelled PR promise nothing.
+  const c = await pricedPrOn(project, 5000);
+  assert.strictEqual((await budgetOf(owner, b)).committedCentavos, 54000, 'pending C is not promised');
+  await json(await decide(owner, c, 'cancel', 'Not needed'), 200);
+  assert.strictEqual((await budgetOf(owner, b)).committedCentavos, 54000, 'cancelled C is not promised');
+
+  // The check follows the prices: PHP 460.00 fits exactly, one centavo more does not.
+  await priceIt(b, purchaser, 46000);
+  assert.deepStrictEqual([(await budgetOf(owner, b)).overBudget, (await budgetOf(owner, b)).overByCentavos], [false, 0]);
+  assert.strictEqual((await listed(b)).OverBudget, false);
+  await priceIt(b, purchaser, 46001);
+  assert.deepStrictEqual([(await budgetOf(owner, b)).overBudget, (await budgetOf(owner, b)).overByCentavos], [true, 1]);
+});
+
+test('budget check: a project with no budget is never flagged, projects do not share a budget, and an unpriced PR has no check', async () => {
+  const purchaser = await loginAs('purchaser1');
+  const owner = await loginAs('owner1');
+  const detail = async (cookie, prId) => json(await call('GET', `/api/purchasing/prs/${prId}`, cookie), 200);
+
+  const none = budgetProject(0);
+  const big = await pricedPrOn(none, 99999999);
+  const noBudget = await detail(owner, big);
+  assert.deepStrictEqual([noBudget.budget.budgetSet, noBudget.budget.overBudget], [false, false]);
+  assert.strictEqual((await json(await call('GET', '/api/purchasing/prs', purchaser), 200)).find((p) => p.PurchaseRequisitionId === big).OverBudget, false);
+
+  // Spending on one project does not touch another project's budget.
+  const first = budgetProject(100000);
+  const second = budgetProject(100000);
+  const spent = await pricedPrOn(first, 90000);
+  await json(await decide(owner, spent, 'approve'), 200);
+  const other = await pricedPrOn(second, 90000);
+  assert.deepStrictEqual([(await detail(owner, other)).budget.committedCentavos, (await detail(owner, other)).budget.overBudget], [0, false]);
+
+  // No prices yet: nothing to check.
+  const unpriced = await shortagePr();
+  assert.strictEqual((await detail(purchaser, unpriced.prId)).budget, null);
+});
