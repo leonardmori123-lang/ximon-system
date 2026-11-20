@@ -8,6 +8,10 @@ const rules = require('../server/services/purchasingRules');
 const { createPurchaseRequisition } = require('../server/services/handoff');
 
 test.before(start);
+// The sample project's small budget would make most of these older tests approve over budget. They are about
+// other things, so the sample project gets no budget here (0 means nothing is checked). The budget tests at the
+// end make projects of their own.
+test.before(() => db.run('UPDATE Project SET MaterialBudgetCentavos = 0'));
 test.after(stop);
 
 const json = async (res, status) => { assert.strictEqual(res.status, status, await res.clone().text()); return res.json(); };
@@ -954,4 +958,103 @@ test('budget check: a project with no budget is never flagged, projects do not s
   // No prices yet: nothing to check.
   const unpriced = await shortagePr();
   assert.strictEqual((await detail(purchaser, unpriced.prId)).budget, null);
+});
+
+// ---------- Step 6, part 2: approving over budget needs the owner's note ----------
+
+test('owner note: trimmed, up to 300 characters, empty means none; pesos read like the screen', () => {
+  assert.strictEqual(rules.checkOwnerNote('  Client agreed to pay the extra  '), 'Client agreed to pay the extra');
+  assert.strictEqual(rules.checkOwnerNote('   '), null);
+  assert.strictEqual(rules.checkOwnerNote(undefined), null);
+  assert.strictEqual(rules.checkOwnerNote('x'.repeat(300)).length, 300);
+  assert.throws(() => rules.checkOwnerNote('x'.repeat(301)), /note can be up to 300/);
+  assert.deepStrictEqual([0, 5, 123456, 10836923].map(rules.formatPesos), ['0.00', '0.05', '1,234.56', '108,369.23']);
+});
+
+test('approving over budget: refused without a note and nothing changes; with a note it is saved, logged and the purchaser is told', async () => {
+  const purchaser = await loginAs('purchaser1');
+  const owner = await loginAs('owner1');
+  const project = budgetProject(100000); // PHP 1,000.00
+  const approve = (prId, note) => call('POST', `/api/purchasing/prs/${prId}/approve`, owner, note === undefined ? {} : { note });
+  const row = (prId) => ({ ...db.get('SELECT Status, OverBudget, OwnerNote FROM PurchaseRequisition WHERE PurchaseRequisitionId = @prId', { prId }) });
+
+  const pr = await pricedPrOn(project, 150000); // PHP 1,500.00 on a PHP 1,000.00 budget: over by PHP 500.00
+  const noticesBefore = notices('purchaser1', `${prNumberOf(pr)}%was approved%`).length;
+  const historyBefore = historyOf(pr).length;
+
+  for (const bad of [undefined, '', '   ']) {
+    const refused = await approve(pr, bad);
+    assert.strictEqual(refused.status, 400, JSON.stringify(bad));
+    assert.match((await refused.json()).error, /over the project budget by PHP 500\.00\. Write why you are approving it, up to 300 characters\./);
+  }
+  assert.strictEqual((await approve(pr, 'x'.repeat(301))).status, 400, 'too long');
+  assert.deepStrictEqual(row(pr), { Status: 'pending', OverBudget: 0, OwnerNote: null }, 'a refusal changes nothing');
+  assert.strictEqual(historyOf(pr).length, historyBefore, 'a refusal writes no history');
+  assert.strictEqual(notices('purchaser1', `${prNumberOf(pr)}%was approved%`).length, noticesBefore, 'a refusal tells nobody');
+
+  const done = await json(await approve(pr, '  Client agreed to pay the extra 500.  '), 200);
+  assert.strictEqual(done.status, 'approved');
+  assert.deepStrictEqual(row(pr), { Status: 'approved', OverBudget: 1, OwnerNote: 'Client agreed to pay the extra 500.' });
+  const last = historyOf(pr).at(-1);
+  assert.deepStrictEqual([last.FromStatus, last.ToStatus, last.Reason], ['pending', 'approved', 'Client agreed to pay the extra 500.']);
+  assert.strictEqual(notices('purchaser1', `${prNumberOf(pr)}%was approved%`)[0].Message, `${prNumberOf(pr)} was approved over the project budget.`);
+
+  // Both roles read the mark and the note on the PR, and the list keeps the flag.
+  for (const cookie of [purchaser, owner]) {
+    const detail = await json(await call('GET', `/api/purchasing/prs/${pr}`, cookie), 200);
+    assert.deepStrictEqual([detail.OverBudget, detail.OwnerNote, detail.budget], [1, 'Client agreed to pay the extra 500.', null]);
+  }
+  const listed = (await json(await call('GET', '/api/purchasing/prs', purchaser), 200)).find((p) => p.PurchaseRequisitionId === pr);
+  assert.strictEqual(listed.OverBudget, true);
+});
+
+test('approving within budget needs no note; a note is still kept if the owner writes one; exactly on the budget is within', async () => {
+  const owner = await loginAs('owner1');
+  const project = budgetProject(100000);
+  const approve = (prId, note) => call('POST', `/api/purchasing/prs/${prId}/approve`, owner, note === undefined ? {} : { note });
+  const row = (prId) => ({ ...db.get('SELECT Status, OverBudget, OwnerNote FROM PurchaseRequisition WHERE PurchaseRequisitionId = @prId', { prId }) });
+
+  const small = await pricedPrOn(project, 40000); // PHP 400.00
+  await json(await approve(small), 200);
+  assert.deepStrictEqual(row(small), { Status: 'approved', OverBudget: 0, OwnerNote: null });
+  assert.strictEqual(notices('purchaser1', `${prNumberOf(small)}%was approved%`)[0].Message, `${prNumberOf(small)} was approved.`);
+
+  const exact = await pricedPrOn(project, 60000); // PHP 600.00 is exactly what is left
+  await json(await approve(exact, 'Uses the whole budget'), 200);
+  assert.deepStrictEqual(row(exact), { Status: 'approved', OverBudget: 0, OwnerNote: 'Uses the whole budget' });
+
+  // Nothing is left now, so one centavo more is over and needs a note.
+  const over = await pricedPrOn(project, 1);
+  assert.strictEqual((await approve(over)).status, 400);
+  assert.strictEqual((await approve(over, 'Just one centavo')).status, 200);
+
+  // The note is only for approving. Holding and cancelling still use the reason and leave the flag alone.
+  const held = await pricedPrOn(project, 99999);
+  await json(await decide(owner, held, 'hold', 'Ask for a second quote'), 200);
+  assert.deepStrictEqual(row(held), { Status: 'on_hold', OverBudget: 0, OwnerNote: null });
+});
+
+test('approving over budget: the other refusals still come first, and the check uses the budget as it is now', async () => {
+  const purchaser = await loginAs('purchaser1');
+  const owner = await loginAs('owner1');
+  const project = budgetProject(100000);
+  const approve = (prId, note) => call('POST', `/api/purchasing/prs/${prId}/approve`, owner, note === undefined ? {} : { note });
+
+  // Not priced: the old 409 message, not a budget message.
+  const unpriced = await shortagePr();
+  assert.strictEqual((await approve(unpriced.prId)).status, 409);
+  // Already decided: 409.
+  const first = await pricedPrOn(project, 70000);
+  await json(await approve(first), 200);
+  assert.strictEqual((await approve(first)).status, 409);
+
+  // A PR that was over budget while pending becomes fine when the money frees up: here the budget is raised.
+  const second = await pricedPrOn(project, 50000); // 700 promised + 500 = over by 200
+  assert.strictEqual((await approve(second)).status, 400);
+  db.run('UPDATE Project SET MaterialBudgetCentavos = 120000 WHERE ProjectId = @project', { project });
+  await json(await approve(second), 200);
+  assert.strictEqual(db.get('SELECT OverBudget AS flag FROM PurchaseRequisition WHERE PurchaseRequisitionId = @second', { second }).flag, 0);
+  // Only the owner can send a note with an approval.
+  const third = await pricedPrOn(project, 90000);
+  assert.strictEqual((await call('POST', `/api/purchasing/prs/${third}/approve`, purchaser, { note: 'x' })).status, 403);
 });

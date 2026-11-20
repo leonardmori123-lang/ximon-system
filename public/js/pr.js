@@ -18,6 +18,8 @@ function info(pr) {
   if (pr.Status === 'on_hold' && pr.Reason) pairs.push(['Hold reason', pr.Reason]);
   if (pr.Status === 'cancelled' && pr.Reason) pairs.push(['Cancel reason', pr.Reason]);
   if (pr.DecidedByName) pairs.push(['Decided by', `${pr.DecidedByName}, ${pr.DecidedAt}`]);
+  if (pr.OverBudget) pairs.push(['Budget', 'Approved over the project budget']);
+  if (pr.OwnerNote) pairs.push(['Owner\'s note', pr.OwnerNote]);
   return h('dl', { class: 'info-grid' }, pairs.flatMap(([k, v]) => [h('dt', null, k), h('dd', null, v)]));
 }
 
@@ -140,7 +142,8 @@ function pricingForm(pr, suppliers) {
       pr.Status === 'on_hold' ? 'Save and send back for approval' : 'Save prices'));
 }
 
-// The owner's decision. Approving needs no reason; putting on hold and cancelling do.
+// The owner's decision. Approving needs no reason, except a note when the PR is over the project budget;
+// putting on hold and cancelling need a reason.
 // pr.decisions lists the buttons that make sense for this status, so the server and the screen agree.
 function decisionPanel(pr) {
   if (!pr.decisions || pr.decisions.length === 0) return null;
@@ -150,15 +153,26 @@ function decisionPanel(pr) {
     placeholder: 'Reason, required to put on hold or cancel',
   });
   const formError = h('p', { class: 'status-bad small mt-3 mb-0', role: 'alert', hidden: true });
+  // Over budget: the owner can still approve, but has to say why. The server checks this again.
+  const overBudget = Boolean(pr.budget && pr.budget.overBudget);
+  const note = overBudget ? h('textarea', {
+    class: 'form-control', id: 'decision-note', rows: 2, maxLength: 300,
+    placeholder: 'Why are you approving it over the budget?',
+  }) : null;
 
   async function decide(action, { reasonNeeded, confirmText, done }) {
     showError(formError, '');
     showError(errorBox, '');
     const text = reason.value.trim();
     if (reasonNeeded && !text) { showError(formError, 'Write the reason first.'); return; }
+    const noteText = note ? note.value.trim() : '';
+    if (action === 'approve' && overBudget && !noteText) { showError(formError, 'Write why you are approving it over the budget first.'); return; }
     if (confirmText && !window.confirm(confirmText)) return;
+    let body = {};
+    if (reasonNeeded) body = { reason: text };
+    else if (action === 'approve' && overBudget) body = { note: noteText };
     try {
-      await api(`/api/purchasing/prs/${id}/${action}`, { method: 'POST', body: reasonNeeded ? { reason: text } : {} });
+      await api(`/api/purchasing/prs/${id}/${action}`, { method: 'POST', body });
       flash = done;
       await load();
     } catch (err) {
@@ -177,13 +191,19 @@ function decisionPanel(pr) {
     h('h2', { class: 'h6' }, 'Your decision'),
     h('p', { class: 'hint' }, intro),
     can('approve') ? h('div', { class: 'mb-3' },
+      overBudget ? h('div', { class: 'mb-2' },
+        h('p', { class: 'status-bad fw-semibold mb-2', role: 'status' }, `This is over the project budget by PHP ${pesos(pr.budget.overByCentavos)}. To approve it, write why.`),
+        h('label', { class: 'form-label', htmlFor: 'decision-note' }, 'Your note for approving over the budget'),
+        note) : null,
       h('button', {
         class: 'btn btn-success', type: 'button',
         onclick: () => decide('approve', {
-          confirmText: `Approve ${pr.PrNumber}? The total is PHP ${pesos(pr.TotalCentavos)}.`,
+          confirmText: overBudget
+            ? `Approve ${pr.PrNumber}? The total is PHP ${pesos(pr.TotalCentavos)}. It is over the project budget by PHP ${pesos(pr.budget.overByCentavos)}, and your note is saved with it.`
+            : `Approve ${pr.PrNumber}? The total is PHP ${pesos(pr.TotalCentavos)}.`,
           done: 'Approved. The purchaser has been notified.',
         }),
-      }, 'Approve')) : null,
+      }, overBudget ? 'Approve over budget' : 'Approve')) : null,
     h('label', { class: 'form-label', htmlFor: 'decision-reason' }, 'Reason'),
     reason,
     h('div', { class: 'd-flex flex-wrap gap-2 mt-2' },

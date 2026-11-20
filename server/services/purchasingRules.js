@@ -110,6 +110,17 @@ function checkReason(value, action) {
   return reason;
 }
 
+// The owner's note when approving: trimmed, up to 300 characters, empty means none.
+// Whether a note is required (over budget) is decided where the budget is known, in decidePr.
+function checkOwnerNote(value) {
+  return optionalText(value, MAX_REASON_LENGTH, 'The note');
+}
+
+// Whole centavos as pesos for a message: 108369 becomes "1,083.69".
+function formatPesos(centavos) {
+  return (centavos / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 // Which decisions the owner can take on a purchase requisition right now.
 // Approve needs a supplier and a price on every line (isPriced), so the screen can hide the button
 // and the route can refuse it.
@@ -176,6 +187,6 @@ function poTotals(lineTotals, discountPercent) {
 
 module.exports = {
   PR_STATUSES, PO_STATUSES, PRICEABLE_STATUSES, MAX_PRICE_CENTAVOS, MAX_REASON_LENGTH, DECISIONS,
-  validateSupplierInput, checkUnitPrice, validatePriceLines, lineTotal, prTotal, budgetCheck, checkReason, ownerDecisions,
+  validateSupplierInput, checkUnitPrice, validatePriceLines, lineTotal, prTotal, budgetCheck, checkReason, checkOwnerNote, formatPesos, ownerDecisions,
   validatePoInput, defaultDeliveryDate, poDiscount, poTotals,
 };

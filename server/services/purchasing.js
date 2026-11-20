@@ -8,7 +8,7 @@ const { nextNumber } = require('./numbering');
 const { notifyUser, notifyRole } = require('./notifications');
 const {
   PR_STATUSES, PO_STATUSES, PRICEABLE_STATUSES, DECISIONS, validateSupplierInput, checkUnitPrice, validatePriceLines, lineTotal, prTotal,
-  budgetCheck, checkReason, ownerDecisions, validatePoInput, defaultDeliveryDate, poTotals,
+  budgetCheck, checkReason, checkOwnerNote, formatPesos, MAX_REASON_LENGTH, ownerDecisions, validatePoInput, defaultDeliveryDate, poTotals,
 } = require('./purchasingRules');
 
 // ---------- Suppliers ----------
@@ -284,10 +284,12 @@ function savePrices(user, id, body) {
 function decidePr(user, id, action, body) {
   const rule = DECISIONS[action];
   const reason = rule.needsReason ? checkReason((body || {}).reason, action) : null;
+  // The owner's note belongs to an approval. It is required when the PR is over the project budget.
+  const note = action === 'approve' ? checkOwnerNote((body || {}).note) : null;
 
   return db.transaction(() => {
     const pr = db.get(
-      `SELECT pr.PrNumber, pr.Status, pr.RequisitionId, r.RfNumber, r.RequestedBy
+      `SELECT pr.PrNumber, pr.Status, pr.ProjectId, pr.RequisitionId, r.RfNumber, r.RequestedBy
        FROM PurchaseRequisition pr LEFT JOIN Requisition r ON r.RequisitionId = pr.RequisitionId
        WHERE pr.PurchaseRequisitionId = @id`,
       { id }
@@ -296,6 +298,7 @@ function decidePr(user, id, action, body) {
     if (!rule.from.includes(pr.Status)) {
       throw new HttpError(409, `This purchase requisition is ${pr.Status.replace('_', ' ')}, so it cannot be ${rule.done}.`);
     }
+    let overBudget = false;
     if (action === 'approve') {
       const count = db.get(
         'SELECT COUNT(*) AS lines, COUNT(UnitPriceCentavos) AS priced FROM PRLine WHERE PurchaseRequisitionId = @id',
@@ -304,20 +307,27 @@ function decidePr(user, id, action, body) {
       if (count.lines === 0 || count.priced < count.lines) {
         throw new HttpError(409, 'The purchaser has not saved a supplier and a price for every line yet, so it cannot be approved.');
       }
+      // Over budget is judged now, as the PR is approved, and saved with the PR.
+      const lines = db.all('SELECT ShortQty, UnitPriceCentavos FROM PRLine WHERE PurchaseRequisitionId = @id', { id });
+      const budget = projectBudgetCheck(pr.ProjectId, prTotal(lines));
+      overBudget = budget.overBudget;
+      if (overBudget && !note) {
+        throw new HttpError(400, `This purchase requisition is over the project budget by PHP ${formatPesos(budget.overByCentavos)}. Write why you are approving it, up to ${MAX_REASON_LENGTH} characters.`);
+      }
     }
 
     const { changes } = db.run(
       `UPDATE PurchaseRequisition
-       SET Status = @to, Reason = @reason, DecidedBy = @userId,
+       SET Status = @to, Reason = @reason, OverBudget = @overBudget, OwnerNote = @note, DecidedBy = @userId,
            DecidedAt = datetime('now','localtime'), UpdatedAt = datetime('now','localtime')
        WHERE PurchaseRequisitionId = @id AND Status = @from`,
-      { to: rule.to, reason, userId: user.id, id, from: pr.Status }
+      { to: rule.to, reason, overBudget: overBudget ? 1 : 0, note, userId: user.id, id, from: pr.Status }
     );
     if (changes === 0) throw new HttpError(409, 'This purchase requisition changed. Open it again.');
-    addDocHistory('PR', id, pr.Status, rule.to, user.id, reason);
+    addDocHistory('PR', id, pr.Status, rule.to, user.id, reason || note);
 
     // The purchasers hear the reason. The requestor hears only the outcome, on the RF page (the foreman cannot open the PR page).
-    const outcome = { approve: 'was approved.', hold: `was put on hold: ${reason}`, cancel: `was cancelled: ${reason}` }[action];
+    const outcome = { approve: overBudget ? 'was approved over the project budget.' : 'was approved.', hold: `was put on hold: ${reason}`, cancel: `was cancelled: ${reason}` }[action];
     notifyRole('purchaser', `${pr.PrNumber} ${outcome}`, prLink(id));
     if (pr.RequestedBy) {
       notifyUser(pr.RequestedBy, `${pr.PrNumber} for ${pr.RfNumber} was ${rule.done}.`, `/requisition.html?id=${pr.RequisitionId}`);
