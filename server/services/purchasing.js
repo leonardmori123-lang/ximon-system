@@ -7,7 +7,7 @@ const { addDocHistory, getDocHistory } = require('./history');
 const { nextNumber } = require('./numbering');
 const { notifyUser, notifyRole } = require('./notifications');
 const {
-  PR_STATUSES, PRICEABLE_STATUSES, DECISIONS, validateSupplierInput, checkUnitPrice, validatePriceLines, lineTotal, prTotal,
+  PR_STATUSES, PO_STATUSES, PRICEABLE_STATUSES, DECISIONS, validateSupplierInput, checkUnitPrice, validatePriceLines, lineTotal, prTotal,
   checkReason, ownerDecisions, validatePoInput, defaultDeliveryDate, poTotals,
 } = require('./purchasingRules');
 
@@ -155,6 +155,23 @@ function getPr(user, id) {
   // One supplier for the whole PR: the save below sets the same supplier on every line.
   const supplierLine = lines.find((l) => l.SupplierId != null);
   const total = prTotal(lines); // null while any line has no price
+
+  // The PO made from this PR, if any. Both roles may see the link to it.
+  const po = db.get('SELECT PurchaseOrderId, PoNumber, Status FROM PurchaseOrder WHERE PurchaseRequisitionId = @id', { id });
+  // The purchaser can make the PO when the PR is approved, fully priced and has none yet.
+  const canMakePo = user.role === 'purchaser' && pr.Status === 'approved' && !po && total !== null && !!supplierLine;
+  let poDefaults = null;
+  if (canMakePo) {
+    // What the PO form starts with. The same fallbacks createPo uses for a box left empty.
+    const supplier = db.get('SELECT PaymentTerms, LeadTimeDays FROM Supplier WHERE SupplierId = @id', { id: supplierLine.SupplierId });
+    poDefaults = {
+      discountPercent: 0,
+      paymentTerms: supplier.PaymentTerms || '',
+      expectedDeliveryDate: defaultDeliveryDate(supplier.LeadTimeDays),
+      deliveryPoint: `${pr.ProjectCode}, ${pr.ProjectName}`,
+    };
+  }
+
   return {
     ...pr,
     SupplierId: supplierLine ? supplierLine.SupplierId : null,
@@ -162,6 +179,9 @@ function getPr(user, id) {
     TotalCentavos: total,
     lines,
     history: getDocHistory('PR', id),
+    po: po ? { ...po } : null,
+    canMakePo,
+    poDefaults,
     canPrice: user.role === 'purchaser' && PRICEABLE_STATUSES.includes(pr.Status),
     // The buttons the owner may press now: some of 'approve', 'hold', 'cancel'. Nobody else gets any.
     decisions: user.role === 'owner' ? ownerDecisions(pr.Status, total !== null) : [],
@@ -334,7 +354,53 @@ function createPo(user, prId, body) {
   });
 }
 
+// All purchase orders, newest first. status is optional: open, partly_delivered or closed.
+function listPos(status) {
+  if (status && !PO_STATUSES.includes(status)) throw new HttpError(400, 'Unknown status.');
+  return db.all(
+    `SELECT po.PurchaseOrderId, po.PoNumber, po.Status, s.Name AS SupplierName, p.Code AS ProjectCode,
+            po.PurchaseRequisitionId, pr.PrNumber, po.ExpectedDeliveryDate, po.TotalCentavos, substr(po.CreatedAt, 1, 16) AS CreatedAt
+     FROM PurchaseOrder po
+     JOIN Supplier s ON s.SupplierId = po.SupplierId
+     JOIN Project p ON p.ProjectId = po.ProjectId
+     LEFT JOIN PurchaseRequisition pr ON pr.PurchaseRequisitionId = po.PurchaseRequisitionId
+     ${status ? 'WHERE po.Status = @status' : ''}
+     ORDER BY po.PurchaseOrderId DESC`,
+    status ? { status } : {}
+  );
+}
+
+// One purchase order with its supplier, lines, totals and history. The print page uses the same data.
+function getPo(id) {
+  const po = db.get(
+    `SELECT po.PurchaseOrderId, po.PoNumber, po.Status, po.PurchaseRequisitionId, pr.PrNumber,
+            po.SupplierId, s.Name AS SupplierName, s.ContactPerson AS SupplierContact, s.Phone AS SupplierPhone,
+            s.Email AS SupplierEmail, s.Address AS SupplierAddress,
+            po.ProjectId, p.Code AS ProjectCode, p.Name AS ProjectName,
+            po.PaymentTerms, po.ExpectedDeliveryDate, po.DeliveryPoint, po.DiscountPercent, po.OtherDiscountCentavos,
+            po.ShippingCentavos, po.SubtotalCentavos, po.DiscountCentavos, po.TotalCentavos,
+            u.FullName AS CreatedByName, substr(po.CreatedAt, 1, 16) AS CreatedAt
+     FROM PurchaseOrder po
+     JOIN Supplier s ON s.SupplierId = po.SupplierId
+     JOIN Project p ON p.ProjectId = po.ProjectId
+     JOIN AppUser u ON u.UserId = po.CreatedBy
+     LEFT JOIN PurchaseRequisition pr ON pr.PurchaseRequisitionId = po.PurchaseRequisitionId
+     WHERE po.PurchaseOrderId = @id`,
+    { id }
+  );
+  if (!po) throw new HttpError(404, 'Purchase order not found.');
+
+  const lines = db.all(
+    `SELECT l.PoLineId, l.ItemId, i.Code, i.Description, i.Unit, l.Quantity, l.UnitPriceCentavos,
+            l.LineTotalCentavos, l.QtyReceived
+     FROM POLine l JOIN Item i ON i.ItemId = l.ItemId
+     WHERE l.PurchaseOrderId = @id ORDER BY l.PoLineId`,
+    { id }
+  );
+  return { ...po, lines, history: getDocHistory('PO', id) };
+}
+
 module.exports = {
   listSuppliers, getSupplier, createSupplier, updateSupplier, saveSupplierPrice,
-  listPrs, getPr, savePrices, decidePr, createPo,
+  listPrs, getPr, savePrices, decidePr, createPo, listPos, getPo,
 };

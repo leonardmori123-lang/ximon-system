@@ -28,3 +28,33 @@ function toCentavos(text) {
 }
 
 const PRICE_ERROR = 'Enter a price above zero, with at most 2 decimals.';
+
+// Purchase order statuses.
+const PO_LABELS = { open: 'Open', partly_delivered: 'Partly delivered', closed: 'Closed' };
+const PO_CLASSES = { open: 'text-bg-primary', partly_delivered: 'text-bg-warning', closed: 'text-bg-success' };
+
+function poBadge(status) {
+  return h('span', { class: `badge ${PO_CLASSES[status] || 'text-bg-light'}` }, PO_LABELS[status] || status);
+}
+
+// The PO sample shows a dash for an amount of zero (other discounts, shipping).
+function pesosOrDash(centavos) {
+  return centavos ? pesos(centavos) : '-';
+}
+
+// Turns what the purchaser typed in the discount box into a percent. An empty box is 0.
+// Returns null when it is not a percent from 0 to 100 with at most 2 decimals.
+function toPercent(text) {
+  const clean = String(text).trim();
+  if (clean === '') return 0;
+  if (!/^\d+(\.\d{1,2})?$/.test(clean)) return null;
+  const percent = Number(clean);
+  return percent <= 100 ? percent : null;
+}
+
+// The discount in whole centavos, half up. The same sum the server does, so the preview matches what is saved.
+function discountOf(subtotalCentavos, percent) {
+  return Math.round((subtotalCentavos * Math.round(percent * 100)) / 10000);
+}
+
+const PERCENT_ERROR = 'Enter the discount as a percent from 0 to 100, with at most 2 decimals.';

@@ -4,6 +4,7 @@ const { HttpError } = require('./errors');
 const { todayString } = require('./rfRules');
 
 const PR_STATUSES = ['pending', 'approved', 'on_hold', 'cancelled'];
+const PO_STATUSES = ['open', 'partly_delivered', 'closed'];
 // The purchaser can change the supplier and prices only while the owner has not approved.
 const PRICEABLE_STATUSES = ['pending', 'on_hold'];
 const MAX_PRICE_CENTAVOS = 1000000000; // PHP 10,000,000 for one unit
@@ -160,7 +161,7 @@ function poTotals(lineTotals, discountPercent) {
 }
 
 module.exports = {
-  PR_STATUSES, PRICEABLE_STATUSES, MAX_PRICE_CENTAVOS, MAX_REASON_LENGTH, DECISIONS,
+  PR_STATUSES, PO_STATUSES, PRICEABLE_STATUSES, MAX_PRICE_CENTAVOS, MAX_REASON_LENGTH, DECISIONS,
   validateSupplierInput, checkUnitPrice, validatePriceLines, lineTotal, prTotal, checkReason, ownerDecisions,
   validatePoInput, defaultDeliveryDate, poDiscount, poTotals,
 };

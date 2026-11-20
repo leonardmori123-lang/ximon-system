@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Purchase order | Ximon</title>
+  <link href="/css/po-print.css" rel="stylesheet">
+</head>
+<body>
+  <div class="no-print">
+    <header id="topbar"></header>
+    <div class="toolbar">
+      <a id="back" href="/pos.html">Back to the purchase order</a>
+      <button id="print" type="button">Print</button>
+    </div>
+  </div>
+  <p id="error" class="no-print error" role="alert" hidden></p>
+  <main id="sheet"></main>
+  <script src="/js/common.js"></script>
+  <script src="/js/purchasing-ui.js"></script>
+  <script src="/js/po-print.js"></script>
+</body>
+</html>

@@ -20,7 +20,7 @@ const ROLE_SCREENS = {
   purchaser: [
     { label: 'Suppliers', href: '/suppliers.html' },
     { label: 'Purchase requisitions', href: '/prs.html' },
-    { label: 'Purchase orders', href: null },
+    { label: 'Purchase orders', href: '/pos.html' },
     { label: 'Late and outstanding deliveries', href: null },
   ],
   verifier: [

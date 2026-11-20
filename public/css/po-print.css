@@ -1,0 +1,53 @@
+/* The printable purchase order. Plain black on white, laid out like the client's PO. */
+@page { size: A4; margin: 15mm; }
+* { box-sizing: border-box; }
+body { margin: 0; background: #e9edef; color: #000; font-family: "Segoe UI", system-ui, -apple-system, Roboto, sans-serif; font-size: 11pt; line-height: 1.4; }
+
+/* On screen: the top bar and a toolbar above a paper-like sheet. */
+.brandbar { background: #1d2b33; color: #fff; }
+.brandbar .container { display: flex; justify-content: space-between; align-items: center; max-width: 60rem; margin: 0 auto; padding: .5rem 12px; }
+.brandbar a { color: #fff; text-decoration: none; }
+.brandbar .muted { color: #b9c6cd; margin-left: .5rem; font-size: .85rem; }
+.brandbar .d-flex { display: flex; gap: .5rem; }
+.brandbar .btn { color: #fff; background: transparent; border: 1px solid #fff; border-radius: 4px; padding: .2rem .5rem; font-size: .85rem; cursor: pointer; }
+.brandbar .badge { background: #dc3545; border-radius: 4px; padding: 0 .35rem; margin-left: .25rem; }
+.brandbar [hidden] { display: none; }
+.toolbar { display: flex; justify-content: space-between; align-items: center; max-width: 60rem; margin: 1rem auto; padding: 0 12px; }
+.toolbar button { background: #b8322a; color: #fff; border: 0; border-radius: 4px; padding: .4rem 1.2rem; font-size: 1rem; cursor: pointer; }
+.error { max-width: 60rem; margin: 1rem auto; padding: 0 12px; color: #b8322a; }
+.error[hidden] { display: none; }
+.sheet { width: 210mm; max-width: 100%; margin: 0 auto 2rem; background: #fff; padding: 15mm; box-shadow: 0 1px 6px rgba(0, 0, 0, .2); }
+
+.head { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; border-bottom: 2px solid #000; padding-bottom: .6rem; }
+.company { font-size: 16pt; font-weight: 700; letter-spacing: .03em; }
+.title { text-align: right; }
+.title h1 { margin: 0; font-size: 18pt; letter-spacing: .08em; }
+.title div { font-size: 11pt; }
+
+.blocks { display: grid; grid-template-columns: 1fr 1fr; gap: 1.2rem; margin: 1rem 0; }
+.block h2 { margin: 0 0 .25rem; font-size: 9pt; text-transform: uppercase; letter-spacing: .06em; color: #444; border-bottom: 1px solid #999; padding-bottom: .15rem; }
+.block p { margin: 0; }
+.block .pair { display: grid; grid-template-columns: 9rem 1fr; gap: .1rem .5rem; margin: 0; }
+.block dt { color: #444; }
+.block dd { margin: 0; }
+
+table.lines { width: 100%; border-collapse: collapse; margin-top: .5rem; }
+table.lines th, table.lines td { border: 1px solid #000; padding: .3rem .5rem; vertical-align: top; }
+table.lines thead th { background: #eee; text-align: left; font-size: 10pt; }
+table.lines thead { display: table-header-group; }
+table.lines tr { break-inside: avoid; }
+.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.center { text-align: center; }
+.code { white-space: nowrap; }
+table.lines tfoot .label { text-align: right; }
+table.lines .grand td { font-weight: 700; font-size: 12pt; }
+
+.signatures { display: grid; grid-template-columns: 1fr 1fr; gap: 3rem; margin-top: 3rem; break-inside: avoid; }
+.signatures .line { border-top: 1px solid #000; padding-top: .2rem; text-align: center; }
+.signatures .name { text-align: center; min-height: 1.4em; }
+
+@media print {
+  body { background: #fff; font-size: 10.5pt; }
+  .no-print { display: none !important; }
+  .sheet { width: auto; margin: 0; padding: 0; box-shadow: none; }
+}

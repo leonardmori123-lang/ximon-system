@@ -202,6 +202,87 @@ function decisionPanel(pr) {
     formError);
 }
 
+// Shown to both roles once the PO exists.
+function poPanel(pr) {
+  if (!pr.po) return null;
+  return h('div', { class: 'panel p-3 mt-4 d-flex flex-wrap align-items-center gap-2' },
+    h('span', null, 'Purchase order'),
+    h('a', { href: `/po.html?id=${pr.po.PurchaseOrderId}`, class: 'fw-semibold' }, pr.po.PoNumber),
+    poBadge(pr.po.Status));
+}
+
+// The purchaser makes the purchase order from an approved PR. The boxes start with the values the server would
+// use if they were left empty, and the total preview does the same whole-centavo sum as the server.
+function poForm(pr) {
+  const d = pr.poDefaults;
+  const discount = h('input', {
+    class: 'form-control', id: 'po-discount', inputMode: 'decimal', autocomplete: 'off', value: String(d.discountPercent), style: 'max-width: 8rem;',
+  });
+  const date = h('input', { class: 'form-control', id: 'po-date', type: 'date', min: todayLocal(), value: d.expectedDeliveryDate || '', style: 'max-width: 12rem;' });
+  const terms = h('input', { class: 'form-control', id: 'po-terms', maxLength: 100, autocomplete: 'off', value: d.paymentTerms });
+  const point = h('input', { class: 'form-control', id: 'po-point', maxLength: 200, autocomplete: 'off', value: d.deliveryPoint });
+  const formError = h('p', { class: 'status-bad small mt-3 mb-0', role: 'alert', hidden: true });
+  const discountLabel = h('td', { class: 'text-end' });
+  const discountCell = h('td', { class: 'num' });
+  const totalCell = h('th', { class: 'num' });
+  const subtotal = pr.TotalCentavos;
+
+  function recalc() {
+    const percent = toPercent(discount.value);
+    if (percent === null) {
+      discountLabel.textContent = 'Less: discount';
+      discountCell.textContent = '';
+      totalCell.textContent = '';
+      return;
+    }
+    const off = discountOf(subtotal, percent);
+    discountLabel.textContent = `Less: ${qty(percent)}% discount`;
+    discountCell.textContent = pesos(off);
+    totalCell.textContent = pesos(subtotal - off);
+  }
+  discount.addEventListener('input', () => { showError(formError, ''); recalc(); });
+
+  const button = h('button', { class: 'btn btn-ximon mt-3', type: 'button' }, 'Make purchase order');
+  async function make() {
+    showError(formError, '');
+    showError(errorBox, '');
+    const percent = toPercent(discount.value);
+    if (percent === null) { showError(formError, PERCENT_ERROR); return; }
+    if (date.value && date.value < todayLocal()) { showError(formError, 'The expected delivery date cannot be in the past.'); return; }
+    const total = subtotal - discountOf(subtotal, percent);
+    if (!window.confirm(`Make the purchase order for PHP ${pesos(total)}? Only one purchase order can be made from this requisition.`)) return;
+    button.disabled = true;
+    try {
+      const made = await api(`/api/purchasing/prs/${id}/po`, {
+        method: 'POST',
+        body: { discountPercent: percent, expectedDeliveryDate: date.value, paymentTerms: terms.value.trim(), deliveryPoint: point.value.trim() },
+      });
+      location.href = `/po.html?id=${made.id}&new=1`;
+    } catch (err) {
+      button.disabled = false;
+      showError(formError, err.message);
+    }
+  }
+  button.addEventListener('click', make);
+
+  recalc();
+  return h('div', { class: 'panel p-3 mt-4' },
+    h('h2', { class: 'h6' }, 'Make purchase order'),
+    h('p', { class: 'hint' }, 'The supplier, quantities and prices come from this requisition. Fill in the rest, then make the order. Leave a box empty to use what is shown.'),
+    h('div', { class: 'row g-3' },
+      h('div', { class: 'col-md-4' }, h('label', { class: 'form-label', htmlFor: 'po-discount' }, 'Discount (%)'), discount),
+      h('div', { class: 'col-md-4' }, h('label', { class: 'form-label', htmlFor: 'po-date' }, 'Expected delivery date'), date),
+      h('div', { class: 'col-md-4' }, h('label', { class: 'form-label', htmlFor: 'po-terms' }, 'Payment terms'), terms),
+      h('div', { class: 'col-12' }, h('label', { class: 'form-label', htmlFor: 'po-point' }, 'Delivery point'), point)),
+    h('table', { class: 'table mb-0 mt-3', style: 'max-width: 26rem; margin-left: auto;' },
+      h('tbody', null,
+        h('tr', null, h('td', { class: 'text-end' }, 'Subtotal'), h('td', { class: 'num' }, pesos(subtotal))),
+        h('tr', null, discountLabel, discountCell),
+        h('tr', null, h('th', { class: 'text-end' }, 'Total (PHP)'), totalCell))),
+    formError,
+    button);
+}
+
 function historyTable(pr) {
   return h('div', null,
     h('h2', { class: 'h6 mt-4' }, 'History'),
@@ -226,7 +307,9 @@ async function load() {
       h('div', { class: 'd-flex align-items-center gap-3 mb-3' }, h('h1', { class: 'h5 mb-0' }, pr.PrNumber), prBadge(pr.Status)),
       flash ? h('p', { class: 'status-ok', role: 'status' }, flash) : null,
       h('div', { class: 'panel p-3' }, info(pr)),
+      poPanel(pr),
       pr.canPrice ? pricingForm(pr, suppliers) : linesTable(pr),
+      pr.canMakePo ? poForm(pr) : null,
       decisionPanel(pr),
       historyTable(pr),
     ].filter(Boolean));

@@ -59,4 +59,13 @@ router.post('/prs/:id/po', requireRole(ROLES.PURCHASER), (req, res) => {
   res.status(201).json(purchasing.createPo(req.session.user, parseId(req.params.id), req.body));
 });
 
+// Purchase orders: the purchaser and the owner read them. (The delivery verifier will get access when receiving is built.)
+router.get('/pos', requireRole(ROLES.PURCHASER, ROLES.OWNER), (req, res) => {
+  res.json(purchasing.listPos(req.query.status));
+});
+
+router.get('/pos/:id', requireRole(ROLES.PURCHASER, ROLES.OWNER), (req, res) => {
+  res.json(purchasing.getPo(parseId(req.params.id)));
+});
+
 module.exports = router;

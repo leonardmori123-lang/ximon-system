@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Purchase orders | Ximon</title>
+  <link href="/vendor/bootstrap/css/bootstrap.min.css" rel="stylesheet">
+  <link href="/css/app.css" rel="stylesheet">
+</head>
+<body>
+  <header id="topbar"></header>
+
+  <main class="container py-4 page-wide">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+      <h1 class="h5 mb-0">Purchase orders</h1>
+      <select id="status" class="form-select" aria-label="Filter by status" style="width: 13rem;"></select>
+    </div>
+
+    <div class="panel table-responsive">
+      <table class="table mb-0 align-middle">
+        <thead>
+          <tr>
+            <th>PO number</th><th>PR number</th><th>Supplier</th><th>Project</th>
+            <th>Expected delivery</th><th class="num">Total (PHP)</th><th>Status</th><th>Created</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <p id="empty" class="hint mt-3" hidden>No purchase orders here.</p>
+    <p id="error" class="status-bad mt-3" role="alert" hidden></p>
+  </main>
+  <script src="/js/common.js"></script>
+  <script src="/js/purchasing-ui.js"></script>
+  <script src="/js/pos.js"></script>
+</body>
+</html>

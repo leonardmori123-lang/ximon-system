@@ -728,3 +728,128 @@ test('PO form: typed values are saved, bad ones save nothing, and the RF\'s Docu
   const trail = await json(await call('GET', `/api/requisitions/${a.rf.id}`, foreman), 200);
   assert.deepStrictEqual(trail.purchaseOrders, [{ PoNumber: res.poNumber, Status: 'open' }]);
 });
+
+// ---------- Step 5 part 2: reading POs, and what the PR page needs for the form ----------
+
+test('PO pages: the purchaser and the owner can read POs, nobody else, and nobody logged out', async () => {
+  assert.strictEqual((await call('GET', '/api/purchasing/pos')).status, 401);
+  assert.strictEqual((await call('GET', '/api/purchasing/pos/1')).status, 401);
+  for (const who of ['foreman1', 'custodian1', 'verifier1']) {
+    const cookie = await loginAs(who);
+    assert.strictEqual((await call('GET', '/api/purchasing/pos', cookie)).status, 403, `${who} list`);
+    assert.strictEqual((await call('GET', '/api/purchasing/pos/1', cookie)).status, 403, `${who} detail`);
+  }
+  for (const who of ['purchaser1', 'owner1']) {
+    const cookie = await loginAs(who);
+    assert.strictEqual((await call('GET', '/api/purchasing/pos', cookie)).status, 200, `${who} list`);
+  }
+});
+
+test('PO detail: the client\'s PO reads back with the supplier, every line and the totals to the centavo', async () => {
+  const purchaser = await loginAs('purchaser1');
+  const owner = await loginAs('owner1');
+  const prId = await clientPr();
+  const made = await json(await makePo(purchaser, prId, { discountPercent: 58, deliveryPoint: 'Site 4, Lapu-Lapu', paymentTerms: '30 days PDC' }), 201);
+
+  for (const cookie of [purchaser, owner]) {
+    const po = await json(await call('GET', `/api/purchasing/pos/${made.id}`, cookie), 200);
+    assert.deepStrictEqual(
+      [po.PoNumber, po.Status, po.PrNumber, po.PurchaseRequisitionId, po.SupplierName, po.DeliveryPoint, po.PaymentTerms, po.CreatedByName],
+      [made.poNumber, 'open', prNumberOf(prId), prId, SEEDED, 'Site 4, Lapu-Lapu', '30 days PDC', 'Test Purchaser']);
+    assert.deepStrictEqual(
+      [po.DiscountPercent, po.SubtotalCentavos, po.DiscountCentavos, po.OtherDiscountCentavos, po.ShippingCentavos, po.TotalCentavos],
+      [58, 11286923, 6546415, 0, 0, 4740508]);
+    assert.deepStrictEqual(po.lines.map((l) => [l.Code, l.Quantity, l.UnitPriceCentavos, l.LineTotalCentavos, l.QtyReceived]), [
+      ['HDPE-001', 11, 53266, 585926, 0], ['HDPE-002', 5, 169127, 845635, 0], ['HDPE-003', 20, 43134, 862680, 0],
+      ['HDPE-004', 4, 126059, 504236, 0], ['HDPE-005', 30, 98641, 2959230, 0], ['HDPE-006', 24, 230384, 5529216, 0],
+    ]);
+    assert.ok(po.lines.every((l) => l.Description && l.Unit), 'each line has its description and unit');
+    assert.deepStrictEqual(po.history.map((h) => [h.FromStatus, h.ToStatus, h.ChangedByName]), [[null, 'open', 'Test Purchaser']]);
+    assert.ok(po.ExpectedDeliveryDate && po.CreatedAt);
+    assert.ok('SupplierAddress' in po && 'SupplierContact' in po, 'the print page needs the supplier\'s details');
+  }
+
+  assert.strictEqual((await call('GET', '/api/purchasing/pos/99999', purchaser)).status, 404);
+  assert.strictEqual((await call('GET', '/api/purchasing/pos/abc', purchaser)).status, 400);
+});
+
+test('PO list: newest first, filtered by status, and a bad status is refused', async () => {
+  const purchaser = await loginAs('purchaser1');
+  const a = await approvedPr();
+  const first = await json(await makePo(purchaser, a.prId), 201);
+  const b = await approvedPr();
+  const second = await json(await makePo(purchaser, b.prId), 201);
+
+  const all = await json(await call('GET', '/api/purchasing/pos', purchaser), 200);
+  const ids = all.map((p) => p.PurchaseOrderId);
+  assert.ok(ids.indexOf(second.id) < ids.indexOf(first.id), 'newest first');
+  const row = all.find((p) => p.PurchaseOrderId === second.id);
+  assert.deepStrictEqual(
+    [row.PoNumber, row.Status, row.SupplierName, row.PrNumber, row.TotalCentavos],
+    [second.poNumber, 'open', SEEDED, prNumberOf(b.prId), second.totalCentavos]);
+  assert.ok(row.ProjectCode && row.ExpectedDeliveryDate && row.CreatedAt);
+
+  db.run(`UPDATE PurchaseOrder SET Status = 'closed' WHERE PurchaseOrderId = @id`, { id: first.id });
+  const open = await json(await call('GET', '/api/purchasing/pos?status=open', purchaser), 200);
+  const closed = await json(await call('GET', '/api/purchasing/pos?status=closed', purchaser), 200);
+  assert.ok(open.some((p) => p.PurchaseOrderId === second.id) && !open.some((p) => p.PurchaseOrderId === first.id));
+  assert.ok(closed.some((p) => p.PurchaseOrderId === first.id) && !closed.some((p) => p.PurchaseOrderId === second.id));
+  assert.strictEqual((await call('GET', '/api/purchasing/pos?status=bogus', purchaser)).status, 400);
+});
+
+test('PR page data: the purchaser gets the PO form only on an approved, priced PR with no PO; the PO link shows once it exists', async () => {
+  const purchaser = await loginAs('purchaser1');
+  const owner = await loginAs('owner1');
+  const detail = async (cookie, prId) => json(await call('GET', `/api/purchasing/prs/${prId}`, cookie), 200);
+
+  // Pending (priced, not yet approved), held and cancelled: no form.
+  const pending = await shortagePr();
+  await priceIt(pending.prId, purchaser);
+  const held = await shortagePr();
+  await json(await decide(owner, held.prId, 'hold', 'Wait for a second quote'), 200);
+  const cancelled = await shortagePr();
+  await json(await decide(owner, cancelled.prId, 'cancel', 'Not needed any more'), 200);
+  for (const made of [pending, held, cancelled]) {
+    const pr = await detail(purchaser, made.prId);
+    assert.deepStrictEqual([pr.canMakePo, pr.poDefaults, pr.po], [false, null, null], pr.Status);
+  }
+
+  // Approved and priced: the form, with the same defaults createPo would use.
+  const a = await approvedPr(2, 99900);
+  const project = db.get('SELECT Code, Name FROM Project WHERE ProjectId = @id', { id: projectId() });
+  const pr = await detail(purchaser, a.prId);
+  assert.strictEqual(pr.canMakePo, true);
+  assert.deepStrictEqual({ ...pr.poDefaults, expectedDeliveryDate: undefined }, {
+    discountPercent: 0, paymentTerms: '30 days', expectedDeliveryDate: undefined, deliveryPoint: `${project.Code}, ${project.Name}`,
+  });
+  assert.strictEqual(pr.poDefaults.expectedDeliveryDate, rules.defaultDeliveryDate(30));
+  assert.strictEqual(pr.po, null);
+  assert.strictEqual(pr.TotalCentavos, 199800, 'the form starts its total from the PR total');
+  const ownerView = await detail(owner, a.prId);
+  assert.deepStrictEqual([ownerView.canMakePo, ownerView.poDefaults], [false, null], 'the owner does not make POs');
+
+  // After the PO: no form for anyone, and both roles get the link data.
+  const made = await json(await makePo(purchaser, a.prId), 201);
+  for (const cookie of [purchaser, owner]) {
+    const after = await detail(cookie, a.prId);
+    assert.deepStrictEqual([after.canMakePo, after.poDefaults], [false, null]);
+    assert.deepStrictEqual(after.po, { PurchaseOrderId: made.id, PoNumber: made.poNumber, Status: 'open' });
+  }
+});
+
+test('the PO form preview does the same discount sum as the server, for every percent from 0.00 to 100.00', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const source = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'purchasing-ui.js'), 'utf8');
+  const ui = new Function('h', `${source}\nreturn { discountOf, toPercent };`)(() => null);
+
+  for (const subtotal of [0, 1, 5000, 199800, 11286923, 99999999]) {
+    for (let hundredths = 0; hundredths <= 10000; hundredths += 1) {
+      const percent = hundredths / 100;
+      assert.strictEqual(ui.discountOf(subtotal, percent), rules.poDiscount(subtotal, percent), `${percent}% of ${subtotal}`);
+    }
+  }
+  // What the purchaser types: empty is 0; more than 2 decimals, above 100, negative or words are refused.
+  assert.deepStrictEqual(['', '0', '58', ' 12.5 ', '100', '0.57'].map(ui.toPercent), [0, 0, 58, 12.5, 100, 0.57]);
+  for (const bad of ['100.01', '12.345', '-1', 'abc', '1,5', '5%']) assert.strictEqual(ui.toPercent(bad), null, bad);
+});
