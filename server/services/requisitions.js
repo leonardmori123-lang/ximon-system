@@ -177,18 +177,81 @@ function returnRequisition(user, id, reasonText) {
   });
 }
 
-// The requestor chooses not to revise a returned RF. It stays on file as cancelled.
+// The requestor cancels his own RF: before the owner decides (pending), or instead of revising it
+// (returned). It stays on file as cancelled. Nothing is reserved yet at these two stages.
 function cancelRequisition(user, id, reasonText) {
-  const reason = String(reasonText || '').trim().slice(0, 300) || 'Not revised';
+  const given = String(reasonText || '').trim().slice(0, 300);
   return db.transaction(() => {
+    const before = db.get('SELECT RfNumber, Status FROM Requisition WHERE RequisitionId = @id', { id });
     const { changes } = db.run(
       `UPDATE Requisition SET Status = 'cancelled', UpdatedAt = datetime('now','localtime')
-       WHERE RequisitionId = @id AND RequestedBy = @userId AND Status = 'returned'`,
+       WHERE RequisitionId = @id AND RequestedBy = @userId AND Status IN ('pending', 'returned')`,
       { id, userId: user.id }
     );
-    if (changes === 0) throw explainNoChange(id, user, 'returned', true);
-    addHistory(id, 'returned', 'cancelled', user.id, reason);
+    if (changes === 0) throw explainNoChange(id, user, 'pending or returned', true);
+    addHistory(id, before.Status, 'cancelled', user.id, given || (before.Status === 'pending' ? 'Cancelled by the requestor' : 'Not revised'));
+    // The owner was told it needed approval, so tell the owner it no longer does.
+    if (before.Status === 'pending') {
+      notifyRole('owner', `${before.RfNumber} was cancelled by ${nameOf(user.id)} before you decided on it.`, rfLink(id));
+    }
     return { id, status: 'cancelled' };
+  });
+}
+
+// The owner cancels an RF he already approved. What was reserved for it goes back to free stock,
+// and a slip that is only prepared is cancelled with it. A purchase requisition or purchase order made
+// for it is not touched (Purchasing decides what to do with those); the purchaser is told.
+// Not allowed once a slip was released to the requestor or anything was issued: those goods left the warehouse.
+function cancelApprovedRequisition(user, id, reasonText) {
+  const reason = String(reasonText || '').trim();
+  if (!reason || reason.length > 300) throw new HttpError(400, 'Write the reason for cancelling it, up to 300 characters.');
+  return db.transaction(() => {
+    const rf = db.get('SELECT RfNumber, RequestedBy, Status FROM Requisition WHERE RequisitionId = @id', { id });
+    if (!rf) throw new HttpError(404, 'Requisition not found.');
+    if (rf.Status === 'partly_fulfilled' || rf.Status === 'fulfilled') {
+      throw new HttpError(409, `Items were already issued on ${rf.RfNumber}, so it cannot be cancelled.`);
+    }
+    if (rf.Status !== 'approved') throw explainNoChange(id, user, 'approved', false);
+    const released = db.get(`SELECT SlipNumber FROM IssuanceSlip WHERE RequisitionId = @id AND Status = 'released'`, { id });
+    if (released) {
+      throw new HttpError(409, `${released.SlipNumber} was already released to the requestor, so ${rf.RfNumber} cannot be cancelled now.`);
+    }
+
+    const { changes } = db.run(
+      `UPDATE Requisition SET Status = 'cancelled', UpdatedAt = datetime('now','localtime')
+       WHERE RequisitionId = @id AND Status = 'approved'`,
+      { id }
+    );
+    if (changes === 0) throw explainNoChange(id, user, 'approved', false);
+    addHistory(id, 'approved', 'cancelled', user.id, reason);
+
+    // A slip that was only prepared goes with it.
+    const slips = db.all(`SELECT SlipId, SlipNumber FROM IssuanceSlip WHERE RequisitionId = @id AND Status = 'prepared'`, { id });
+    for (const slip of slips) {
+      db.run(`UPDATE IssuanceSlip SET Status = 'cancelled' WHERE SlipId = @slipId`, { slipId: slip.SlipId });
+      addDocHistory('IS', slip.SlipId, 'prepared', 'cancelled', user.id, `${rf.RfNumber} was cancelled`);
+    }
+
+    // Give the reserved units back. Nothing was issued, so the whole reservation is still held.
+    const reservedLines = db.all('SELECT LineId, ItemId, QtyReserved FROM RequisitionLine WHERE RequisitionId = @id AND QtyReserved > 0', { id });
+    for (const line of reservedLines) {
+      const freed = db.run(
+        'UPDATE Item SET Reserved = ROUND(Reserved - @qty, 2) WHERE ItemId = @itemId AND Reserved + 0.001 >= @qty',
+        { itemId: line.ItemId, qty: line.QtyReserved }
+      );
+      if (freed.changes === 0) throw new HttpError(409, 'The stock record does not match this requisition. Ask the warehouse to check it.');
+    }
+    db.run('UPDATE RequisitionLine SET QtyReserved = 0, QtyShort = 0 WHERE RequisitionId = @id', { id });
+
+    notifyUser(rf.RequestedBy, `${rf.RfNumber} was cancelled by the owner: ${reason}`, rfLink(id));
+    if (reservedLines.length || slips.length) {
+      notifyRole('custodian', `${rf.RfNumber} was cancelled. Its reserved items are free again${slips.length ? `, and ${slips.map((x) => x.SlipNumber).join(', ')} was cancelled` : ''}.`, '/slips.html');
+    }
+    const prs = db.all('SELECT PrNumber FROM PurchaseRequisition WHERE RequisitionId = @id ORDER BY PurchaseRequisitionId', { id });
+    if (prs.length) {
+      notifyRole('purchaser', `${rf.RfNumber} was cancelled. ${prs.map((x) => x.PrNumber).join(', ')} was made for it and has not been changed.`, '/prs.html');
+    }
+    return { id, status: 'cancelled', releasedLines: reservedLines.length };
   });
 }
 
@@ -220,5 +283,5 @@ function reviseRequisition(user, id, body) {
 
 module.exports = {
   listRequisitions, getRequisition, createRequisition, reviseRequisition,
-  approveRequisition, returnRequisition, cancelRequisition,
+  approveRequisition, returnRequisition, cancelRequisition, cancelApprovedRequisition,
 };

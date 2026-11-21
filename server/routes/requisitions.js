@@ -34,4 +34,9 @@ router.post('/:id/cancel', requireRole(ROLES.FOREMAN), (req, res) => {
   res.json(rf.cancelRequisition(req.session.user, parseId(req.params.id), (req.body || {}).reason));
 });
 
+// The owner cancels an approved requisition; what was reserved for it is released.
+router.post('/:id/cancel-approved', requireRole(ROLES.OWNER), (req, res) => {
+  res.json(rf.cancelApprovedRequisition(req.session.user, parseId(req.params.id), (req.body || {}).reason));
+});
+
 module.exports = router;

@@ -118,6 +118,7 @@ async function act(path, body, confirmText) {
     await load();
   } catch (err) {
     showError(errorBox, err.message);
+    errorBox.scrollIntoView({ block: 'nearest' }); // the buttons are far down the page
   }
 }
 
@@ -130,6 +131,26 @@ function actions(rf) {
       h('label', { class: 'form-label', htmlFor: 'return-reason' }, 'Return to the requestor'),
       reason,
       h('button', { class: 'btn btn-outline-secondary mt-2', type: 'button', onclick: () => act('return', { reason: reason.value }) }, 'Return with reason'));
+  }
+  if (user.role === 'owner' && rf.Status === 'approved') {
+    const released = (rf.slips || []).find((sl) => sl.Status === 'released');
+    if (released) {
+      return h('div', { class: 'panel p-3 mt-4' },
+        h('p', { class: 'mb-0' }, `${released.SlipNumber} was already released to the requestor, so this requisition cannot be cancelled now.`));
+    }
+    const reason = h('textarea', { class: 'form-control', id: 'cancel-reason', rows: 2, maxLength: 300, placeholder: 'Reason, required' });
+    return h('div', { class: 'panel p-3 mt-4' },
+      h('label', { class: 'form-label', htmlFor: 'cancel-reason' }, 'Cancel this requisition'),
+      h('p', { class: 'hint mb-2' }, 'The items reserved for it go back to free stock, and a prepared issuance slip is cancelled. A purchase requisition already made for it is not changed.'),
+      reason,
+      h('button', { class: 'btn btn-outline-danger mt-2', type: 'button', id: 'cancel-approved',
+        onclick: () => act('cancel-approved', { reason: reason.value }, `Cancel ${rf.RfNumber}? Its reserved items are released. It stays on file but cannot be reopened.`) }, 'Cancel requisition'));
+  }
+  if (user.role === 'foreman' && rf.Status === 'pending' && rf.RequestedBy === user.id) {
+    return h('div', { class: 'panel p-3 mt-4' },
+      h('p', { class: 'mb-2' }, 'The owner has not decided yet. If you no longer need these items, you can cancel this requisition.'),
+      h('button', { class: 'btn btn-outline-secondary', type: 'button', id: 'cancel-pending',
+        onclick: () => act('cancel', {}, 'Cancel this requisition? It stays on file but cannot be reopened.') }, 'Cancel requisition'));
   }
   if (user.role === 'foreman' && rf.Status === 'returned' && rf.RequestedBy === user.id) {
     return h('div', { class: 'panel p-3 mt-4' },
