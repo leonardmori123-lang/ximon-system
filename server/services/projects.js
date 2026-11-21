@@ -45,4 +45,25 @@ function updateProject(id, body) {
   return { id };
 }
 
-module.exports = { listProjects, createProject, updateProject };
+// Delete a project nobody has used. The database refuses when a requisition, purchase requisition, purchase
+// order, issuance slip or stock log row still points at it (foreign keys are on), and that also covers tables
+// added later. The message tells the owner to close it instead, which keeps the paper trail whole.
+function isForeignKeyError(err) {
+  return Boolean(err && err.code === 'ERR_SQLITE_ERROR' && /FOREIGN KEY constraint failed/.test(err.message));
+}
+
+function deleteProject(id) {
+  const project = db.get('SELECT Code FROM Project WHERE ProjectId = @id', { id });
+  if (!project) throw new HttpError(404, 'Project not found.');
+  try {
+    db.run('DELETE FROM Project WHERE ProjectId = @id', { id });
+  } catch (err) {
+    if (isForeignKeyError(err)) {
+      throw new HttpError(409, `${project.Code} is already used by documents (requisitions, purchase requisitions, purchase orders or stock records), so it cannot be deleted. Set it to Closed instead.`);
+    }
+    throw err;
+  }
+  return { id };
+}
+
+module.exports = { listProjects, createProject, updateProject, deleteProject };

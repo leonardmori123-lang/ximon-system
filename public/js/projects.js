@@ -7,6 +7,7 @@ const modal = new bootstrap.Modal(document.getElementById('project-modal'));
 const field = (id) => document.getElementById(id);
 
 let editingId = null;
+let editingCode = '';
 
 function leftCell(p) {
   if (p.LeftCentavos === null) return h('td', { class: 'num text-muted' }, '-');
@@ -31,6 +32,7 @@ function render(projects) {
 
 function openForm(project) {
   editingId = project ? project.ProjectId : null;
+  editingCode = project ? project.Code : '';
   document.getElementById('modal-title').textContent = project ? `Edit ${project.Code}` : 'Add project';
   field('f-code').value = project ? project.Code : '';
   field('f-code').disabled = Boolean(project); // the code never changes once documents use it
@@ -38,6 +40,7 @@ function openForm(project) {
   field('f-budget').value = project && project.MaterialBudgetCentavos > 0 ? pesosPlain(project.MaterialBudgetCentavos) : '';
   field('f-status').value = project ? project.Status : 'active';
   field('status-wrap').hidden = !project;
+  field('delete').hidden = !project;
   showError(formError, '');
   modal.show();
 }
@@ -59,6 +62,23 @@ form.addEventListener('submit', async (event) => {
   }
 });
 
+// An old message stays on screen until the next Save, so clear it as soon as the owner changes the form.
+form.addEventListener('input', () => showError(formError, ''));
+
+// Delete for good. The server refuses while any document uses the project, and says so in the form.
+async function deleteProject() {
+  if (!editingId) return;
+  if (!window.confirm(`Delete ${editingCode} for good? This cannot be undone.`)) return;
+  showError(formError, '');
+  try {
+    await api(`/api/projects/${editingId}`, { method: 'DELETE' });
+    modal.hide();
+    await load();
+  } catch (err) {
+    showError(formError, err.message);
+  }
+}
+
 async function load() {
   showError(errorBox, '');
   try {
@@ -71,6 +91,7 @@ async function load() {
 async function start() {
   await startPage(['owner']);
   document.getElementById('add').addEventListener('click', () => openForm(null));
+  field('delete').addEventListener('click', deleteProject);
   await load();
 }
 

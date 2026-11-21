@@ -24,4 +24,8 @@ router.put('/:id', requireRole(ROLES.OWNER), (req, res) => {
   res.json(projects.updateProject(parseId(req.params.id), req.body));
 });
 
+router.delete('/:id', requireRole(ROLES.OWNER), (req, res) => {
+  res.json(projects.deleteProject(parseId(req.params.id)));
+});
+
 module.exports = router;

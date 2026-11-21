@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { db, start, stop, loginAs, call, rfBody, user } = require('./helpers');
+const { db, start, stop, loginAs, call, rfBody, user, itemId } = require('./helpers');
 const rules = require('../server/services/projectRules');
 
 test.before(start);
@@ -170,4 +170,72 @@ test('already promised and left follow the purchase orders; no budget means noth
   // A bigger budget moves Left at once.
   await json(await call('PUT', `/api/projects/${id}`, owner, { name: 'Money check', materialBudgetCentavos: 200000, status: 'active' }), 200);
   assert.deepStrictEqual(await read('MONEY-1'), [200000, 110000, 90000]);
+});
+
+test('deleting a project: an unused one is removed for good; one that any document uses is refused and stays', async () => {
+  const owner = await loginAs('owner1');
+  const foreman = await loginAs('foreman1');
+  const add = async (code) => (await json(await call('POST', '/api/projects', owner, { code, name: `Project ${code}`, materialBudgetCentavos: 100000 }), 201)).id;
+  const remove = (id, cookie = owner) => call('DELETE', `/api/projects/${id}`, cookie);
+  const refused = async (id, code) => {
+    const res = await remove(id);
+    assert.strictEqual(res.status, 409, `${code} should be refused`);
+    const { error } = await res.json();
+    assert.match(error, new RegExp(`^${code} is already used`));
+    assert.match(error, /Set it to Closed instead\./);
+    assert.ok(rowOf(code), `${code} is still there`);
+  };
+
+  // Never used: gone from the table, the pick list and the database; the code is free again.
+  const unused = await add('DEL-UNUSED');
+  assert.deepStrictEqual(await json(await remove(unused), 200), { id: unused });
+  assert.strictEqual(rowOf('DEL-UNUSED'), undefined);
+  assert.ok(!(await json(await call('GET', '/api/projects/all', owner), 200)).some((p) => p.Code === 'DEL-UNUSED'));
+  assert.ok(!(await json(await call('GET', '/api/projects', foreman), 200)).some((p) => p.Code === 'DEL-UNUSED'));
+  await add('DEL-UNUSED');
+
+  // Closed and never used can be deleted too.
+  const closed = await add('DEL-CLOSED');
+  await json(await call('PUT', `/api/projects/${closed}`, owner, { name: 'x', materialBudgetCentavos: 0, status: 'closed' }), 200);
+  await json(await remove(closed), 200);
+  assert.strictEqual(rowOf('DEL-CLOSED'), undefined);
+
+  // A requisition uses it.
+  const withRf = await add('DEL-RF');
+  const rf = await json(await call('POST', '/api/requisitions', foreman, { ...rfBody([['HDPE-001', 1]]), projectId: withRf }), 201);
+  await refused(withRf, 'DEL-RF');
+  assert.strictEqual((await json(await call('GET', `/api/requisitions/${rf.id}`, foreman), 200)).ProjectCode, 'DEL-RF');
+
+  // A purchase requisition uses it.
+  const withPr = await add('DEL-PR');
+  const prId = db.run(`INSERT INTO PurchaseRequisition (PrNumber, ProjectId) VALUES ('PR-DEL-1', @id)`, { id: withPr }).lastId;
+  await refused(withPr, 'DEL-PR');
+
+  // A purchase order uses it.
+  const withPo = await add('DEL-PO');
+  addPo(withPo, 5000);
+  await refused(withPo, 'DEL-PO');
+
+  // A stock record uses it.
+  const withStock = await add('DEL-STOCK');
+  db.run(`INSERT INTO StockTransaction (ItemId, TxType, Quantity, ProjectId, CreatedBy) VALUES (@item, 'receipt', 1, @id, @user)`,
+    { item: itemId('HDPE-001'), id: withStock, user: user('owner1').id });
+  await refused(withStock, 'DEL-STOCK');
+
+  // The refusal follows the data: once the only document is gone, the project can go.
+  db.run('DELETE FROM PurchaseRequisition WHERE PurchaseRequisitionId = @id', { id: prId });
+  await json(await remove(withPr), 200);
+  assert.strictEqual(rowOf('DEL-PR'), undefined);
+
+  // A project that does not exist, and a bad id.
+  assert.strictEqual((await remove(999999)).status, 404);
+  assert.strictEqual((await remove('abc')).status, 400);
+
+  // Only the owner. The unused project survives every try.
+  const keep = await add('DEL-KEEP');
+  assert.strictEqual((await call('DELETE', `/api/projects/${keep}`)).status, 401);
+  for (const who of ['foreman1', 'custodian1', 'purchaser1', 'verifier1']) {
+    assert.strictEqual((await remove(keep, await loginAs(who))).status, 403, who);
+  }
+  assert.ok(rowOf('DEL-KEEP'));
 });
