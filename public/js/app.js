@@ -3,6 +3,7 @@ const ROLE_SCREENS = {
   owner: [
     { label: 'Approve or return requisitions', href: '/requisitions.html' },
     { label: 'Approve purchase requisitions', href: '/prs.html' },
+    { label: 'Purchase orders', href: '/pos.html' },
     { label: 'Item list', href: '/items.html' },
     { label: 'Issuance slips', href: '/slips.html' },
     { label: 'Reports', href: null },

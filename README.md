@@ -67,3 +67,4 @@ Test users (password is `SEED_PASSWORD` from `.env`, default `ximon123`): `owner
 | 2026-11-19 | Member A | Purchasing (shared file `public/js/app.js`) | Menu links that were empty now open pages: owner "Approve purchase requisitions" opens `/prs.html`; purchaser "Suppliers" opens `/suppliers.html` and "Purchase requisitions" opens `/prs.html` |
 | 2026-11-20 | Member A | Purchasing (shared file `public/js/app.js`) | Purchaser menu: "Purchase orders" opens `/pos.html` |
 | 2026-11-21 | Member A | Purchasing (shared file `public/js/app.js`) | Verifier menu: "Open purchase orders" opens `/pos.html` |
+| 2026-11-21 | Member A | Purchasing (shared file `public/js/app.js`) | Owner menu: new row "Purchase orders" opens `/pos.html` |
