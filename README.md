@@ -48,6 +48,7 @@ Test users (password is `SEED_PASSWORD` from `.env`, default `ximon123`): `owner
 - Do several changes together inside `db.transaction(() => { ... })`. If anything throws, all of it is undone.
 - Remaining budget: `Project.MaterialBudgetCentavos` minus what it is already promised to, which is every PO made for the project (delivered or not) and every approved PR that has no PO yet. A budget of 0 means none is set, so nothing is checked. A PR is over budget when what is promised plus the PR's total is above the budget. The check only needs to be live while the owner still has to decide (pending or on hold). Stock issued from the warehouse is not counted, because items have no cost.
 - Approving an over-budget PR: the owner can still approve it, but only with a note saying why (up to 300 characters). The server refuses the approval without one, and the screen asks for it before sending. The check is made at the moment of approval. The PR then keeps `OverBudget = 1` and the note in `OwnerNote`; both show on its page and in the History, the purchaser is told it was approved over the project budget, and the PR list keeps the red "Over budget" badge. Within budget, no note is needed, and one the owner writes anyway is kept.
+- Purchase orders for the delivery verifier: `GET /api/purchasing/pos` and `GET /api/purchasing/pos/:id` also work for the verifier, but without any money (no unit prices, discount, subtotal, shipping or total; the list has no total). The PO page and the list hide the same columns, the PR number is plain text, and the print view and the PR pages stay closed to this role. Receiving can read `Quantity` and `QtyReceived` per line from the PO detail.
 - Change shared files (`server/db.js`, `server/auth.js`, the page layout) only after telling the other members.
 
 ## Handoff functions (agree names and inputs, then write them here)
@@ -60,3 +61,9 @@ Test users (password is `SEED_PASSWORD` from `.env`, default `ximon123`): `owner
 
 | Date | Who asked | Module | Change |
 | --- | --- | --- | --- |
+| 2026-11-18 | Member A | Purchasing (shared file `server/db.js`) | Tidy only: `clean()` rewritten as a plain loop. Same result: true and false become 1 and 0, undefined becomes null |
+| 2026-11-18 | Member A | Purchasing (shared file `public/js/common.js`) | Tidy only: the `bellBadge` variable is declared above `startPage`, and comments added. No change in behavior |
+| 2026-11-19 | Member A | Purchasing (shared file `server/index.js`) | Added the line that mounts the purchasing routes at `/api/purchasing` |
+| 2026-11-19 | Member A | Purchasing (shared file `public/js/app.js`) | Menu links that were empty now open pages: owner "Approve purchase requisitions" opens `/prs.html`; purchaser "Suppliers" opens `/suppliers.html` and "Purchase requisitions" opens `/prs.html` |
+| 2026-11-20 | Member A | Purchasing (shared file `public/js/app.js`) | Purchaser menu: "Purchase orders" opens `/pos.html` |
+| 2026-11-21 | Member A | Purchasing (shared file `public/js/app.js`) | Verifier menu: "Open purchase orders" opens `/pos.html` |

@@ -24,7 +24,7 @@ const ROLE_SCREENS = {
     { label: 'Late and outstanding deliveries', href: null },
   ],
   verifier: [
-    { label: 'Open purchase orders', href: null },
+    { label: 'Open purchase orders', href: '/pos.html' },
     { label: 'Receive a delivery', href: null },
   ],
 };

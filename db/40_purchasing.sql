@@ -127,6 +127,9 @@ CREATE INDEX IF NOT EXISTS IX_PRLine_PR ON PRLine(PurchaseRequisitionId);
 CREATE INDEX IF NOT EXISTS IX_Quotation_PrLine ON Quotation(PrLineId);
 CREATE INDEX IF NOT EXISTS IX_PurchaseOrder_Status ON PurchaseOrder(Status);
 CREATE INDEX IF NOT EXISTS IX_POLine_PO ON POLine(PurchaseOrderId);
+-- One PO per PR. The code already refuses a second one; this makes the database refuse it too.
+-- (A PO with no PR is allowed more than once: SQLite does not treat NULLs as equal in a unique index.)
+CREATE UNIQUE INDEX IF NOT EXISTS UX_PurchaseOrder_PR ON PurchaseOrder(PurchaseRequisitionId);
 
 -- Test data: one supplier with the unit prices from the client's sample PO (HDPE-001 to HDPE-006).
 -- The client's PO names no supplier, so this one is made up. Replace it once the client names one.

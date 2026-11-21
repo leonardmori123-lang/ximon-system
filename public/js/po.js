@@ -2,10 +2,12 @@ const content = document.getElementById('content');
 const errorBox = document.getElementById('error');
 const params = new URLSearchParams(location.search);
 const id = params.get('id');
+// The delivery verifier sees the PO without money, cannot open the PR or the print view.
+let isVerifier = false;
 
 function info(po) {
   const supplierDetails = [po.SupplierContact, po.SupplierPhone, po.SupplierEmail, po.SupplierAddress].filter(Boolean).join(', ');
-  const prCell = !po.PrNumber ? 'None' : h('a', { href: `/pr.html?id=${po.PurchaseRequisitionId}` }, po.PrNumber);
+  const prCell = !po.PrNumber ? 'None' : isVerifier ? po.PrNumber : h('a', { href: `/pr.html?id=${po.PurchaseRequisitionId}` }, po.PrNumber);
   const pairs = [
     ['Purchase requisition', prCell],
     ['Supplier', po.SupplierName],
@@ -29,17 +31,19 @@ function linesTable(po) {
       h('thead', null, h('tr', null,
         h('th', null, 'Code'), h('th', null, 'Description'), h('th', null, 'Unit'),
         h('th', { class: 'num' }, 'Ordered'), h('th', { class: 'num' }, 'Received'),
-        h('th', { class: 'num' }, 'Unit price (PHP)'), h('th', { class: 'num' }, 'Line total (PHP)'))),
+        isVerifier ? null : h('th', { class: 'num' }, 'Unit price (PHP)'),
+        isVerifier ? null : h('th', { class: 'num' }, 'Line total (PHP)'))),
       h('tbody', null,
         po.lines.map((l) => h('tr', null,
           h('td', { class: 'text-nowrap' }, l.Code), h('td', null, l.Description), h('td', null, l.Unit),
           h('td', { class: 'num' }, qty(l.Quantity)), h('td', { class: 'num' }, qty(l.QtyReceived)),
-          h('td', { class: 'num' }, pesos(l.UnitPriceCentavos)), h('td', { class: 'num' }, pesos(l.LineTotalCentavos)))),
-        totalRow('Subtotal', pesos(po.SubtotalCentavos)),
-        totalRow(`Less: ${qty(po.DiscountPercent)}% discount`, pesosOrDash(po.DiscountCentavos)),
-        totalRow('Other discounts', pesosOrDash(po.OtherDiscountCentavos)),
-        totalRow('Shipping', pesosOrDash(po.ShippingCentavos)),
-        totalRow('Total', pesos(po.TotalCentavos), true))));
+          isVerifier ? null : h('td', { class: 'num' }, pesos(l.UnitPriceCentavos)),
+          isVerifier ? null : h('td', { class: 'num' }, pesos(l.LineTotalCentavos)))),
+        isVerifier ? null : totalRow('Subtotal', pesos(po.SubtotalCentavos)),
+        isVerifier ? null : totalRow(`Less: ${qty(po.DiscountPercent)}% discount`, pesosOrDash(po.DiscountCentavos)),
+        isVerifier ? null : totalRow('Other discounts', pesosOrDash(po.OtherDiscountCentavos)),
+        isVerifier ? null : totalRow('Shipping', pesosOrDash(po.ShippingCentavos)),
+        isVerifier ? null : totalRow('Total', pesos(po.TotalCentavos), true))));
 }
 
 function historyTable(po) {
@@ -61,7 +65,7 @@ async function load() {
     content.replaceChildren(...[
       h('div', { class: 'd-flex flex-wrap align-items-center gap-3 mb-3' },
         h('h1', { class: 'h5 mb-0' }, po.PoNumber), poBadge(po.Status),
-        h('a', { class: 'btn btn-outline-secondary btn-sm', href: `/po-print.html?id=${po.PurchaseOrderId}` }, 'Print view')),
+        isVerifier ? null : h('a', { class: 'btn btn-outline-secondary btn-sm', href: `/po-print.html?id=${po.PurchaseOrderId}` }, 'Print view')),
       params.get('new') ? h('p', { class: 'status-ok', role: 'status' }, 'Purchase order made. Open the print view to print it.') : null,
       h('div', { class: 'panel p-3' }, info(po)),
       linesTable(po),
@@ -74,7 +78,8 @@ async function load() {
 }
 
 async function start() {
-  await startPage(['purchaser', 'owner']);
+  const user = await startPage(['purchaser', 'owner', 'verifier']);
+  isVerifier = user.role === 'verifier';
   if (!id) { showError(errorBox, 'No purchase order chosen.'); return; }
   await load();
 }

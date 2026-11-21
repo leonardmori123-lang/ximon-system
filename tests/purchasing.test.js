@@ -709,6 +709,32 @@ test('a PO is made only from an approved PR, only once; a refusal writes nothing
   assert.strictEqual(Number(second.poNumber.slice(-4)), Number(first.poNumber.slice(-4)) + 1);
 });
 
+test('one PO per PR is also held by the database: a second PO for the same PR is refused even when the code is bypassed', async () => {
+  const purchaser = await loginAs('purchaser1');
+  const a = await approvedPr();
+  const first = await json(await makePo(purchaser, a.prId), 201);
+  const insertPo = (poNumber, prId) => db.run(
+    `INSERT INTO PurchaseOrder (PoNumber, PurchaseRequisitionId, SupplierId, ProjectId, CreatedBy)
+     VALUES (@poNumber, @prId, @supplierId, @projectId, @userId)`,
+    { poNumber, prId, supplierId: supplierId(), projectId: projectId(), userId: user('purchaser1').id }
+  );
+
+  const before = poCounts();
+  assert.throws(() => insertPo('PO-9999-0001', a.prId), (err) => db.isUniqueError(err) && /PurchaseRequisitionId/.test(err.message));
+  assert.deepStrictEqual(poCounts(), before, 'the refused insert wrote nothing');
+  assert.strictEqual(db.get('SELECT PoNumber FROM PurchaseOrder WHERE PurchaseRequisitionId = @id', { id: a.prId }).PoNumber, first.poNumber);
+
+  // A PO with no PR is still allowed more than once (rolled back, so the other tests see nothing).
+  class Undo extends Error {}
+  assert.throws(() => db.transaction(() => {
+    insertPo('PO-9999-0002', null);
+    insertPo('PO-9999-0003', null);
+    assert.strictEqual(db.get('SELECT COUNT(*) AS n FROM PurchaseOrder WHERE PurchaseRequisitionId IS NULL').n >= 2, true);
+    throw new Undo('roll back');
+  }), Undo);
+  assert.deepStrictEqual(poCounts(), before);
+});
+
 test('PO form: typed values are saved, bad ones save nothing, and the RF\'s Document Trail finds the PO', async () => {
   const purchaser = await loginAs('purchaser1');
   const foreman = await loginAs('foreman1');
@@ -735,17 +761,70 @@ test('PO form: typed values are saved, bad ones save nothing, and the RF\'s Docu
 
 // ---------- Step 5 part 2: reading POs, and what the PR page needs for the form ----------
 
-test('PO pages: the purchaser and the owner can read POs, nobody else, and nobody logged out', async () => {
+test('PO pages: the purchaser, the owner and the verifier can read POs, nobody else, and nobody logged out', async () => {
   assert.strictEqual((await call('GET', '/api/purchasing/pos')).status, 401);
   assert.strictEqual((await call('GET', '/api/purchasing/pos/1')).status, 401);
-  for (const who of ['foreman1', 'custodian1', 'verifier1']) {
+  for (const who of ['foreman1', 'custodian1']) {
     const cookie = await loginAs(who);
     assert.strictEqual((await call('GET', '/api/purchasing/pos', cookie)).status, 403, `${who} list`);
     assert.strictEqual((await call('GET', '/api/purchasing/pos/1', cookie)).status, 403, `${who} detail`);
   }
-  for (const who of ['purchaser1', 'owner1']) {
+  const poId = db.get('SELECT MIN(PurchaseOrderId) AS id FROM PurchaseOrder').id;
+  for (const who of ['purchaser1', 'owner1', 'verifier1']) {
     const cookie = await loginAs(who);
     assert.strictEqual((await call('GET', '/api/purchasing/pos', cookie)).status, 200, `${who} list`);
+    assert.strictEqual((await call('GET', `/api/purchasing/pos/${poId}`, cookie)).status, 200, `${who} detail`);
+  }
+  // Reading is all the verifier gets: no PO can be made by this role, and the PR pages stay closed to it.
+  const verifier = await loginAs('verifier1');
+  assert.strictEqual((await makePo(verifier, 1)).status, 403);
+  assert.strictEqual((await call('GET', '/api/purchasing/prs', verifier)).status, 403);
+  assert.strictEqual((await call('GET', '/api/purchasing/prs/1', verifier)).status, 403);
+});
+
+test('the verifier reads a PO without any money; the purchaser and the owner still get all of it', async () => {
+  const purchaser = await loginAs('purchaser1');
+  const prId = await clientPr();
+  const made = await json(await makePo(purchaser, prId, { discountPercent: 58 }), 201);
+  const verifier = await loginAs('verifier1');
+
+  // Detail: exactly these fields, nothing with a price, a discount or a total.
+  const seen = await json(await call('GET', `/api/purchasing/pos/${made.id}`, verifier), 200);
+  assert.deepStrictEqual(Object.keys(seen), [
+    'PurchaseOrderId', 'PoNumber', 'Status', 'PurchaseRequisitionId', 'PrNumber', 'SupplierId', 'SupplierName', 'SupplierContact',
+    'SupplierPhone', 'SupplierEmail', 'SupplierAddress', 'ProjectId', 'ProjectCode', 'ProjectName', 'PaymentTerms',
+    'ExpectedDeliveryDate', 'DeliveryPoint', 'CreatedByName', 'CreatedAt', 'lines', 'history']);
+  assert.strictEqual(seen.PoNumber, made.poNumber);
+  assert.strictEqual(seen.lines.length, 6);
+  for (const line of seen.lines) {
+    assert.deepStrictEqual(Object.keys(line), ['PoLineId', 'ItemId', 'Code', 'Description', 'Unit', 'Quantity', 'QtyReceived']);
+  }
+  assert.deepStrictEqual(seen.lines.map((l) => [l.Code, l.Quantity, l.QtyReceived]), [
+    ['HDPE-001', 11, 0], ['HDPE-002', 5, 0], ['HDPE-003', 20, 0], ['HDPE-004', 4, 0], ['HDPE-005', 30, 0], ['HDPE-006', 24, 0]]);
+  assert.strictEqual(seen.history.length, 1, 'the history still comes');
+  const text = JSON.stringify(seen);
+  assert.ok(!/centavo|discount|price|total/i.test(text), 'a money field reached the verifier');
+  for (const amount of ['11286923', '6546415', '4740508', '53266', '230384']) assert.ok(!text.includes(amount), `${amount} reached the verifier`);
+
+  // List: same rule.
+  const list = await json(await call('GET', '/api/purchasing/pos', verifier), 200);
+  const row = list.find((p) => p.PurchaseOrderId === made.id);
+  assert.deepStrictEqual(Object.keys(row), [
+    'PurchaseOrderId', 'PoNumber', 'Status', 'SupplierName', 'ProjectCode', 'PurchaseRequisitionId', 'PrNumber', 'ExpectedDeliveryDate', 'CreatedAt']);
+  assert.ok(list.every((p) => !('TotalCentavos' in p)));
+  const filtered = await json(await call('GET', '/api/purchasing/pos?status=closed', verifier), 200);
+  assert.ok(filtered.every((p) => p.Status === 'closed'), 'the status filter works for the verifier too');
+  assert.strictEqual((await call('GET', '/api/purchasing/pos?status=nonsense', verifier)).status, 400);
+
+  // The purchaser and the owner are not changed.
+  for (const who of ['purchaser1', 'owner1']) {
+    const cookie = await loginAs(who);
+    const full = await json(await call('GET', `/api/purchasing/pos/${made.id}`, cookie), 200);
+    assert.strictEqual(full.TotalCentavos, 4740508, who);
+    assert.strictEqual(full.DiscountPercent, 58, who);
+    assert.strictEqual(full.lines[0].UnitPriceCentavos, 53266, who);
+    const fullList = await json(await call('GET', '/api/purchasing/pos', cookie), 200);
+    assert.strictEqual(fullList.find((p) => p.PurchaseOrderId === made.id).TotalCentavos, 4740508, who);
   }
 });
 

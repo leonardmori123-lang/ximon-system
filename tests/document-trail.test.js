@@ -77,16 +77,22 @@ test('a PO shows up through its PR, and only through its PR', async () => {
 
 test('an RF with several PRs and POs shows all of them, in the order they were made', async () => {
   const id = await fileRf();
+  // One PO per PR. The POs are made in a different order from the PRs, so the order of the POs is
+  // really the order they were made, not the order of their PRs.
   const firstPr = addPr(id, 'PR-TEST-0004', 'approved');
-  const secondPr = addPr(id, 'PR-TEST-0005', 'on_hold');
-  addPo(firstPr, 'PO-TEST-0004', 'closed');
+  addPr(id, 'PR-TEST-0005', 'on_hold'); // no PO yet
+  const thirdPr = addPr(id, 'PR-TEST-0010', 'approved');
+  const fourthPr = addPr(id, 'PR-TEST-0011', 'approved');
+  addPo(thirdPr, 'PO-TEST-0004', 'closed');
   addPo(firstPr, 'PO-TEST-0005', 'open');
-  addPo(secondPr, 'PO-TEST-0006', 'open');
+  addPo(fourthPr, 'PO-TEST-0006', 'open');
 
   const rf = await readRf('owner1', id);
   assert.deepStrictEqual(rf.purchaseRequisitions, [
     { PrNumber: 'PR-TEST-0004', Status: 'approved' },
     { PrNumber: 'PR-TEST-0005', Status: 'on_hold' },
+    { PrNumber: 'PR-TEST-0010', Status: 'approved' },
+    { PrNumber: 'PR-TEST-0011', Status: 'approved' },
   ]);
   assert.deepStrictEqual(rf.purchaseOrders, [
     { PoNumber: 'PO-TEST-0004', Status: 'closed' },

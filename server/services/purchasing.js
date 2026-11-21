@@ -401,10 +401,18 @@ function createPo(user, prId, body) {
   });
 }
 
+// The delivery verifier checks a delivery against a PO: supplier, items, quantities, dates. No prices, discounts
+// or totals are sent to this role, the same way the foreman never gets money.
+const isMoneyField = (name) => /Centavos$/.test(name) || name === 'DiscountPercent';
+function withoutMoney(row) {
+  return Object.fromEntries(Object.entries(row).filter(([name]) => !isMoneyField(name)));
+}
+
 // All purchase orders, newest first. status is optional: open, partly_delivered or closed.
-function listPos(status) {
+// The user decides whether money is included (the verifier does not get it).
+function listPos(user, status) {
   if (status && !PO_STATUSES.includes(status)) throw new HttpError(400, 'Unknown status.');
-  return db.all(
+  const rows = db.all(
     `SELECT po.PurchaseOrderId, po.PoNumber, po.Status, s.Name AS SupplierName, p.Code AS ProjectCode,
             po.PurchaseRequisitionId, pr.PrNumber, po.ExpectedDeliveryDate, po.TotalCentavos, substr(po.CreatedAt, 1, 16) AS CreatedAt
      FROM PurchaseOrder po
@@ -415,10 +423,12 @@ function listPos(status) {
      ORDER BY po.PurchaseOrderId DESC`,
     status ? { status } : {}
   );
+  return user.role === 'verifier' ? rows.map(withoutMoney) : rows;
 }
 
 // One purchase order with its supplier, lines, totals and history. The print page uses the same data.
-function getPo(id) {
+// The verifier gets it without any money.
+function getPo(user, id) {
   const po = db.get(
     `SELECT po.PurchaseOrderId, po.PoNumber, po.Status, po.PurchaseRequisitionId, pr.PrNumber,
             po.SupplierId, s.Name AS SupplierName, s.ContactPerson AS SupplierContact, s.Phone AS SupplierPhone,
@@ -444,7 +454,9 @@ function getPo(id) {
      WHERE l.PurchaseOrderId = @id ORDER BY l.PoLineId`,
     { id }
   );
-  return { ...po, lines, history: getDocHistory('PO', id) };
+  const whole = { ...po, lines, history: getDocHistory('PO', id) };
+  if (user.role !== 'verifier') return whole;
+  return { ...withoutMoney(po), lines: lines.map(withoutMoney), history: whole.history };
 }
 
 module.exports = {
