@@ -6,6 +6,7 @@ const bcrypt = require('bcryptjs');
 const { db, start, stop, loginAs, call, rfBody, user, item, itemId } = require('./helpers');
 const slips = require('../server/services/issuance');
 const receipts = require('../server/services/receipts');
+const { createPurchaseRequisition } = require('../server/services/handoff');
 
 test.before(async () => {
   db.run(`INSERT INTO AppUser (FullName, Username, PasswordHash, Role) VALUES ('Other Foreman', 'foreman2', @hash, 'foreman')`,
@@ -156,7 +157,18 @@ test('a requisition with a shortage: the reserved part is released, the purchase
   assert.strictEqual(prBefore.length, 1);
   assert.deepStrictEqual(prLinesBefore, [{ ItemId: itemId('HDPE-003'), ShortQty: 2 }]);
 
+  // The purchase requisition shows the state of the requisition behind it, to the purchaser and to the owner.
+  const purchaser = await loginAs('purchaser1');
+  const prId = db.get('SELECT PurchaseRequisitionId AS id FROM PurchaseRequisition WHERE RequisitionId = @id', { id }).id;
+  const seen = async (cookie) => ({
+    list: (await json(await call('GET', '/api/purchasing/prs', cookie), 200)).find((p) => p.PurchaseRequisitionId === prId).RfStatus,
+    page: (await json(await call('GET', `/api/purchasing/prs/${prId}`, cookie), 200)).RfStatus,
+  });
+  assert.deepStrictEqual(await seen(purchaser), { list: 'approved', page: 'approved' });
+
   await json(await ownerCancel(owner, id, 'Not needed any more'), 200);
+  assert.deepStrictEqual(await seen(purchaser), { list: 'cancelled', page: 'cancelled' });
+  assert.deepStrictEqual(await seen(owner), { list: 'cancelled', page: 'cancelled' });
   assert.deepStrictEqual(item('HDPE-003'), { OnHand: 4, Reserved: 0 });
   assert.deepStrictEqual(lines(id).map((l) => [l.QtyReserved, l.QtyShort]), [[0, 0]]);
   assert.deepStrictEqual(prsOf(id), prBefore, 'the purchase requisition is exactly as it was');
@@ -196,6 +208,18 @@ test('other requisitions hold part of the same stock: a cancel frees only its ow
   assert.deepStrictEqual(item('ACU-001'), { OnHand: 7, Reserved: 4 }, 'back to what the first requisition holds');
   assert.deepStrictEqual(prsOf(big.id), prBefore);
   assert.deepStrictEqual(lines(held.id).map((l) => l.QtyReserved), [4]);
+});
+
+test('a purchase requisition made without a requisition form has no requisition status', async () => {
+  const purchaser = await loginAs('purchaser1');
+  const owner = user('owner1');
+  const { prNumber, id } = db.transaction(() => createPurchaseRequisition({
+    requisitionId: null, rfNumber: 'RF-CLIENT', projectId: db.get('SELECT ProjectId FROM Project LIMIT 1').ProjectId, userId: owner.id,
+    lines: [{ itemId: itemId('HDPE-001'), shortQty: 2 }],
+  }));
+  const prId = id || db.get('SELECT PurchaseRequisitionId AS id FROM PurchaseRequisition WHERE PrNumber = @prNumber', { prNumber }).id;
+  assert.strictEqual((await json(await call('GET', `/api/purchasing/prs/${prId}`, purchaser), 200)).RfStatus, null);
+  assert.strictEqual((await json(await call('GET', '/api/purchasing/prs', purchaser), 200)).find((p) => p.PurchaseRequisitionId === prId).RfStatus, null);
 });
 
 test('a prepared slip is cancelled with the requisition; releasing it afterwards is refused', async () => {

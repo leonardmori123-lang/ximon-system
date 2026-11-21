@@ -131,7 +131,7 @@ function projectBudgetCheck(projectId, prTotalCentavos) {
 function listPrs(status) {
   if (status && !PR_STATUSES.includes(status)) throw new HttpError(400, 'Unknown status.');
   const rows = db.all(
-    `SELECT pr.PurchaseRequisitionId, pr.PrNumber, pr.Status, pr.OverBudget, r.RfNumber, pr.ProjectId,
+    `SELECT pr.PurchaseRequisitionId, pr.PrNumber, pr.Status, pr.OverBudget, r.RfNumber, r.Status AS RfStatus, pr.ProjectId,
             p.Code AS ProjectCode, p.Name AS ProjectName, substr(pr.CreatedAt, 1, 16) AS CreatedAt,
             COUNT(l.PrLineId) AS LineCount, COUNT(l.UnitPriceCentavos) AS PricedCount,
             MAX(s.Name) AS SupplierName,
@@ -158,7 +158,7 @@ function listPrs(status) {
 function getPr(user, id) {
   const pr = db.get(
     `SELECT pr.PurchaseRequisitionId, pr.PrNumber, pr.Status, pr.Reason, pr.OverBudget, pr.OwnerNote,
-            pr.RequisitionId, r.RfNumber, pr.ProjectId, p.Code AS ProjectCode, p.Name AS ProjectName,
+            pr.RequisitionId, r.RfNumber, r.Status AS RfStatus, pr.ProjectId, p.Code AS ProjectCode, p.Name AS ProjectName,
             d.FullName AS DecidedByName, substr(pr.DecidedAt, 1, 16) AS DecidedAt,
             substr(pr.CreatedAt, 1, 16) AS CreatedAt
      FROM PurchaseRequisition pr

@@ -10,7 +10,7 @@ async function load() {
     const list = await api(status ? `/api/purchasing/prs?status=${encodeURIComponent(status)}` : '/api/purchasing/prs');
     rows.replaceChildren(...list.map((p) => h('tr', null,
       h('td', null, h('a', { href: `/pr.html?id=${p.PurchaseRequisitionId}` }, p.PrNumber)),
-      h('td', null, p.RfNumber || ''),
+      h('td', null, p.RfNumber || '', p.RfStatus === 'cancelled' ? h('span', { class: 'badge text-bg-secondary ms-1' }, 'RF cancelled') : null),
       h('td', null, p.ProjectCode),
       h('td', null, p.SupplierName || ''),
       h('td', { class: 'num' }, `${p.PricedCount} of ${p.LineCount}`),

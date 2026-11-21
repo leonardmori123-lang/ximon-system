@@ -10,7 +10,7 @@ function info(pr) {
     : user.role === 'owner' ? h('a', { href: `/requisition.html?id=${pr.RequisitionId}` }, pr.RfNumber)
       : pr.RfNumber;
   const pairs = [
-    ['Requisition form', rfCell],
+    ['Requisition form', pr.RfStatus === 'cancelled' ? h('span', null, rfCell, h('span', { class: 'badge text-bg-secondary ms-2' }, 'RF cancelled')) : rfCell],
     ['Project', `${pr.ProjectCode}, ${pr.ProjectName}`],
     ['Created', pr.CreatedAt],
     ['Supplier', pr.SupplierName || 'Not chosen yet'],
@@ -21,6 +21,16 @@ function info(pr) {
   if (pr.OverBudget) pairs.push(['Budget', 'Approved over the project budget']);
   if (pr.OwnerNote) pairs.push(['Owner\'s note', pr.OwnerNote]);
   return h('dl', { class: 'info-grid' }, pairs.flatMap(([k, v]) => [h('dt', null, k), h('dd', null, v)]));
+}
+
+// The owner can cancel an RF after its purchase requisition was made. The PR is left as it was,
+// so say so here, where the purchaser prices it and the owner decides on it.
+function rfCancelledNote(pr) {
+  if (pr.RfStatus !== 'cancelled' || pr.Status === 'cancelled') return null;
+  const open = pr.Status === 'pending' || pr.Status === 'on_hold';
+  const next = !open ? '' : user.role === 'owner' ? ' You can cancel this purchase requisition too.' : ' The owner decides whether to cancel it too.';
+  return h('div', { class: 'panel p-3 mt-3', role: 'status', id: 'rf-cancelled-note' },
+    `${pr.RfNumber} was cancelled after this purchase requisition was made. Nothing here was changed.${next}`);
 }
 
 // The lines as saved. The owner always sees this one; the purchaser sees it once the PR is decided.
@@ -346,6 +356,7 @@ async function load() {
       h('div', { class: 'd-flex align-items-center gap-3 mb-3' }, h('h1', { class: 'h5 mb-0' }, pr.PrNumber), prBadge(pr.Status)),
       flash ? h('p', { class: 'status-ok', role: 'status' }, flash) : null,
       h('div', { class: 'panel p-3' }, info(pr)),
+      rfCancelledNote(pr),
       poPanel(pr),
       pr.canPrice ? pricingForm(pr, suppliers) : linesTable(pr),
       budgetPanel(pr),
