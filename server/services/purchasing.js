@@ -461,5 +461,5 @@ function getPo(user, id) {
 
 module.exports = {
   listSuppliers, getSupplier, createSupplier, updateSupplier, saveSupplierPrice,
-  listPrs, getPr, savePrices, decidePr, createPo, listPos, getPo,
+  listPrs, getPr, savePrices, decidePr, createPo, listPos, getPo, committedCentavos,
 };

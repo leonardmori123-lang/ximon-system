@@ -50,7 +50,9 @@ test('the purchasing menu links: owner and purchaser reach the PR and PO pages, 
   const hrefs = (role) => menu[role].filter((s) => s.href).map((s) => s.href);
   assert.ok(hrefs('owner').includes('/prs.html'));
   assert.ok(hrefs('owner').includes('/pos.html'));
+  assert.ok(hrefs('owner').includes('/projects.html'));
   assert.deepStrictEqual(hrefs('purchaser').filter((h) => /^\/(suppliers|prs|pos)\.html$/.test(h)), ['/suppliers.html', '/prs.html', '/pos.html']);
   assert.ok(hrefs('verifier').includes('/pos.html'));
   assert.ok(!hrefs('foreman').includes('/pos.html') && !hrefs('custodian').includes('/pos.html'));
+  assert.ok(['foreman', 'custodian', 'purchaser', 'verifier'].every((r) => !hrefs(r).includes('/projects.html')));
 });

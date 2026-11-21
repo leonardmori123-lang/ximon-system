@@ -29,6 +29,15 @@ function toCentavos(text) {
 
 const PRICE_ERROR = 'Enter a price above zero, with at most 2 decimals.';
 
+// For the project budget box: "4,500" becomes 450000. An empty box or 0 means no budget (0).
+// Returns null when it is not an amount with at most 2 decimals.
+function toBudgetCentavos(text) {
+  const clean = String(text).trim().replace(/,/g, '');
+  if (clean === '') return 0;
+  if (!/^\d+(\.\d{1,2})?$/.test(clean)) return null;
+  return Math.round(Number(clean) * 100);
+}
+
 // Purchase order statuses.
 const PO_LABELS = { open: 'Open', partly_delivered: 'Partly delivered', closed: 'Closed' };
 const PO_CLASSES = { open: 'text-bg-primary', partly_delivered: 'text-bg-warning', closed: 'text-bg-success' };

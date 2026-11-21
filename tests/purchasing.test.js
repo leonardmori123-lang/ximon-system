@@ -1137,3 +1137,36 @@ test('approving over budget: the other refusals still come first, and the check 
   const third = await pricedPrOn(project, 90000);
   assert.strictEqual((await call('POST', `/api/purchasing/prs/${third}/approve`, purchaser, { note: 'x' })).status, 403);
 });
+
+test('changing a project\'s budget on the Projects page moves the budget panel of a pending PR, and leaves a decided PR as it was', async () => {
+  const owner = await loginAs('owner1');
+  const project = budgetProject(100000); // PHP 1,000.00
+  const prId = await pricedPrOn(project, 150000); // PHP 1,500.00, waiting for the owner
+  const setBudget = (centavos) => call('PUT', `/api/projects/${project}`, owner, { name: 'Budget test', materialBudgetCentavos: centavos, status: 'active' });
+  const panel = async () => ({ ...(await json(await call('GET', `/api/purchasing/prs/${prId}`, owner), 200)).budget });
+  const row = async () => (await json(await call('GET', '/api/purchasing/prs', owner), 200)).find((p) => p.PurchaseRequisitionId === prId);
+
+  let budget = await panel();
+  assert.deepStrictEqual([budget.budgetSet, budget.overBudget, budget.overByCentavos], [true, true, 50000]);
+  assert.strictEqual((await row()).OverBudget, true);
+
+  await json(await setBudget(150000), 200); // exactly the price: within
+  budget = await panel();
+  assert.deepStrictEqual([budget.budgetCentavos, budget.overBudget, budget.overByCentavos], [150000, false, 0]);
+  assert.strictEqual((await row()).OverBudget, false);
+
+  await json(await setBudget(0), 200); // no budget: nothing is checked
+  budget = await panel();
+  assert.deepStrictEqual([budget.budgetSet, budget.overBudget], [false, false]);
+
+  await json(await setBudget(90000), 200); // lower again: over by 600.00
+  budget = await panel();
+  assert.deepStrictEqual([budget.overBudget, budget.overByCentavos], [true, 60000]);
+
+  // Approved over budget with a note: the PR keeps that, whatever the budget becomes later.
+  await json(await call('POST', `/api/purchasing/prs/${prId}/approve`, owner, { note: 'Kept as approved' }), 200);
+  await json(await setBudget(100000000), 200);
+  const decided = await json(await call('GET', `/api/purchasing/prs/${prId}`, owner), 200);
+  assert.deepStrictEqual([decided.Status, decided.OverBudget, decided.OwnerNote], ['approved', 1, 'Kept as approved']);
+  assert.strictEqual((await row()).OverBudget, true, 'the list still shows it as approved over budget');
+});

@@ -6,6 +6,7 @@ const ROLE_SCREENS = {
     { label: 'Purchase orders', href: '/pos.html' },
     { label: 'Item list', href: '/items.html' },
     { label: 'Issuance slips', href: '/slips.html' },
+    { label: 'Projects', href: '/projects.html' },
     { label: 'Reports', href: null },
   ],
   foreman: [

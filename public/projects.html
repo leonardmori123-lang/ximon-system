@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Projects | Ximon</title>
+  <link href="/vendor/bootstrap/css/bootstrap.min.css" rel="stylesheet">
+  <link href="/css/app.css" rel="stylesheet">
+</head>
+<body>
+  <header id="topbar"></header>
+
+  <main class="container py-4 page-wide">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+      <h1 class="h5 mb-0">Projects</h1>
+      <button id="add" class="btn btn-ximon text-nowrap" type="button">Add project</button>
+    </div>
+
+    <div class="panel table-responsive">
+      <table class="table mb-0 align-middle">
+        <thead>
+          <tr>
+            <th>Code</th><th>Name</th><th>Status</th>
+            <th class="num">Material budget (PHP)</th><th class="num">Already promised (PHP)</th><th class="num">Left (PHP)</th><th></th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <p id="empty" class="hint mt-3" hidden>No projects yet.</p>
+    <p id="error" class="status-bad mt-3" role="alert" hidden></p>
+    <p class="hint mt-3 mb-0">
+      Already promised is what the budget is committed to: every purchase order made for the project, and every approved
+      purchase requisition that has no purchase order yet. A budget of 0 means none is set, so nothing is checked.
+      Changing a budget only affects purchase requisitions the owner has not decided yet.
+    </p>
+  </main>
+
+  <div class="modal fade" id="project-modal" tabindex="-1" aria-labelledby="modal-title" aria-hidden="true">
+    <div class="modal-dialog">
+      <form class="modal-content" id="project-form" novalidate>
+        <div class="modal-header">
+          <h2 class="modal-title h6" id="modal-title">Project</h2>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label" for="f-code">Code</label>
+            <input id="f-code" class="form-control" maxlength="30" placeholder="ADC-RECEPTION" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label" for="f-name">Name</label>
+            <input id="f-name" class="form-control" maxlength="200" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label" for="f-budget">Material budget (PHP)</label>
+            <input id="f-budget" class="form-control" inputmode="decimal" placeholder="4,500.00" autocomplete="off">
+            <div class="form-text">Leave it empty or 0 if no budget is set yet.</div>
+          </div>
+          <div class="mb-2" id="status-wrap">
+            <label class="form-label" for="f-status">Status</label>
+            <select id="f-status" class="form-select">
+              <option value="active">Active</option>
+              <option value="closed">Closed</option>
+            </select>
+            <div class="form-text">A closed project cannot be chosen on a new or revised requisition. Documents already made carry on.</div>
+          </div>
+          <p id="form-error" class="status-bad small mt-3 mb-0" role="alert" hidden></p>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-ximon">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="/vendor/bootstrap/js/bootstrap.bundle.min.js"></script>
+  <script src="/js/common.js"></script>
+  <script src="/js/purchasing-ui.js"></script>
+  <script src="/js/projects.js"></script>
+</body>
+</html>
