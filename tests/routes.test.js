@@ -71,3 +71,11 @@ test('bad ids and broken JSON are 400s, not crashes', async () => {
   const res = await callRaw('POST', '/api/requisitions', await loginAs('foreman1'), '{oops');
   assert.strictEqual(res.status, 400);
 });
+
+test('the item list tells which items are Low (IsLow): HDPE-002 has 0 on hand, HDPE-001 has 10', async () => {
+  const items = await (await call('GET', '/api/items', await loginAs('custodian1'))).json();
+  const byCode = (code) => items.find((i) => i.Code === code);
+  assert.strictEqual(byCode('HDPE-002').IsLow, true);  // 0 on hand, reorder point 2
+  assert.strictEqual(byCode('HDPE-001').IsLow, false); // 10 on hand, reorder point 2
+  assert.ok(items.every((i) => typeof i.IsLow === 'boolean'));
+});

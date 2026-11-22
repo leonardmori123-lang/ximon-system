@@ -22,4 +22,15 @@ function planAllocation(received, qtyShort, available) {
   return Math.max(Math.round(give * 100) / 100, 0);
 }
 
-module.exports = { hasTwoDecimals, planReservation, planAllocation };
+// Pure rule for the "Low" badge on the Item list. Takes one row of the Item list.
+// An item is Low when it is active, a reorder point is set (0 means none), and Available
+// (on hand minus reserved, because reserved units are already promised) is at or below it.
+function isLowStock(item) {
+  if (!item.IsActive) return false;
+  const reorderPoint = Number(item.ReorderPoint);
+  if (!(reorderPoint > 0)) return false;
+  const available = Math.round((Number(item.OnHand) - Number(item.Reserved)) * 100) / 100;
+  return available <= reorderPoint;
+}
+
+module.exports = { hasTwoDecimals, planReservation, planAllocation, isLowStock };

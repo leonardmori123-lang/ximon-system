@@ -1,12 +1,15 @@
 const db = require('../db');
 const { HttpError } = require('./errors');
 const { validateItemInput } = require('./itemRules');
+const { isLowStock } = require('./stockRules');
 
 const ITEM_COLUMNS = `ItemId, Code, Description, Unit, Location, OnHand, Reserved,
   ROUND(OnHand - Reserved, 2) AS Available, ReorderPoint, LeadTimeDays, IsTool, IsActive`;
 
 function listItems({ includeInactive }) {
-  return db.all(`SELECT ${ITEM_COLUMNS} FROM Item ${includeInactive ? '' : 'WHERE IsActive = 1'} ORDER BY Code`);
+  const rows = db.all(`SELECT ${ITEM_COLUMNS} FROM Item ${includeInactive ? '' : 'WHERE IsActive = 1'} ORDER BY Code`);
+  // IsLow: at or below the reorder point (see isLowStock in stockRules.js)
+  return rows.map((row) => ({ ...row, IsLow: isLowStock(row) }));
 }
 
 function createItem(body) {
