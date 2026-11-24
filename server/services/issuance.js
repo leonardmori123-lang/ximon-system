@@ -1,7 +1,4 @@
-// Release side of Inventory, following the flowchart:
-//   Stock issuance slip (prepared for release) -> Deliver / issue items to requestor
-//   -> Signed acknowledgment (verified by requestor) -> Deduct issued quantities and close requisition.
-// Stock is deducted only when the requestor confirms receipt.
+// Issuance slip management: preparing, releasing, confirming, and cancelling slips.
 const db = require('../db');
 const { nextNumber } = require('./numbering');
 const { addDocHistory, getDocHistory } = require('./history');
@@ -27,12 +24,16 @@ const SLIP_HEADER_SQL = `
   LEFT JOIN AppUser ab ON ab.UserId = s.AcknowledgedBy`;
 
 function assertCanView(user, slip) {
-  if (user.role === 'owner' || user.role === 'custodian') return;
-  if (user.role === 'foreman' && slip.RequestedBy === user.id) return;
+  if (user.role === 'owner' || user.role === 'custodian') {
+    return;
+  }
+  if (user.role === 'foreman' && slip.RequestedBy === user.id) {
+    return;
+  }
   throw new HttpError(403, 'You cannot open this slip.');
 }
 
-// Approved requisitions that have reserved items waiting and no open slip yet.
+// Lists approved requisitions that have reserved stock waiting without an open slip.
 function listReleasable() {
   return db.all(`
     SELECT r.RequisitionId, r.RfNumber, p.Code AS ProjectCode, u.FullName AS RequestedByName,
@@ -49,11 +50,19 @@ function listReleasable() {
 }
 
 function listSlips(user, status) {
-  if (status && !SLIP_STATUSES.includes(status)) throw new HttpError(400, 'Unknown status.');
+  if (status && !SLIP_STATUSES.includes(status)) {
+    throw new HttpError(400, 'Unknown status.');
+  }
   const where = [];
   const params = {};
-  if (status) { where.push('s.Status = @status'); params.status = status; }
-  if (user.role === 'foreman') { where.push('r.RequestedBy = @userId'); params.userId = user.id; }
+  if (status) {
+    where.push('s.Status = @status');
+    params.status = status;
+  }
+  if (user.role === 'foreman') {
+    where.push('r.RequestedBy = @userId');
+    params.userId = user.id;
+  }
   return db.all(
     `SELECT s.SlipId, s.SlipNumber, s.Status, r.RequisitionId, r.RfNumber, p.Code AS ProjectCode,
             u.FullName AS RequestedByName, substr(s.PreparedAt, 1, 16) AS PreparedAt,
@@ -70,7 +79,9 @@ function listSlips(user, status) {
 
 function getSlip(user, id) {
   const row = db.get(`${SLIP_HEADER_SQL} WHERE s.SlipId = @id`, { id });
-  if (!row) throw new HttpError(404, 'Slip not found.');
+  if (!row) {
+    throw new HttpError(404, 'Slip not found.');
+  }
   assertCanView(user, row);
   const slip = { ...row };
   slip.lines = db.all(
@@ -83,11 +94,13 @@ function getSlip(user, id) {
   return slip;
 }
 
-// The warehouse prepares a slip for everything reserved and not yet issued on one requisition.
+// Warehouse prepares a slip for all reserved, unissued items on an approved requisition.
 function prepareSlip(user, requisitionId) {
   return db.transaction(() => {
     const rf = db.get('SELECT Status FROM Requisition WHERE RequisitionId = @id', { id: requisitionId });
-    if (!rf) throw new HttpError(404, 'Requisition not found.');
+    if (!rf) {
+      throw new HttpError(404, 'Requisition not found.');
+    }
     if (!['approved', 'partly_fulfilled'].includes(rf.Status)) {
       throw new HttpError(409, 'Only an approved requisition can get an issuance slip.');
     }
@@ -95,14 +108,18 @@ function prepareSlip(user, requisitionId) {
       `SELECT SlipNumber FROM IssuanceSlip WHERE RequisitionId = @id AND Status IN ('prepared', 'released')`,
       { id: requisitionId }
     );
-    if (open) throw new HttpError(409, `${open.SlipNumber} is still open for this requisition.`);
+    if (open) {
+      throw new HttpError(409, `${open.SlipNumber} is still open for this requisition.`);
+    }
 
     const lines = db.all(
       `SELECT LineId, ItemId, ROUND(QtyReserved - QtyIssued, 2) AS Qty
        FROM RequisitionLine WHERE RequisitionId = @id AND QtyReserved - QtyIssued > 0 ORDER BY LineId`,
       { id: requisitionId }
     );
-    if (!lines.length) throw new HttpError(409, 'Nothing is reserved and waiting to be released.');
+    if (lines.length === 0) {
+      throw new HttpError(409, 'Nothing is reserved and waiting to be released.');
+    }
 
     const slipNumber = nextNumber('IS');
     const { lastId: slipId } = db.run(
@@ -123,11 +140,12 @@ function prepareSlip(user, requisitionId) {
 
 function explainNoChange(id, needStatus) {
   const row = db.get('SELECT Status FROM IssuanceSlip WHERE SlipId = @id', { id });
-  if (!row) return new HttpError(404, 'Slip not found.');
+  if (!row) {
+    return new HttpError(404, 'Slip not found.');
+  }
   return new HttpError(409, `This slip is ${row.Status}, but it must be ${needStatus} for this action.`);
 }
 
-// The custodian hands the items to the requestor. Stock is not deducted yet.
 function releaseSlip(user, id) {
   return db.transaction(() => {
     const { changes } = db.run(
@@ -135,7 +153,9 @@ function releaseSlip(user, id) {
        WHERE SlipId = @id AND Status = 'prepared'`,
       { id, userId: user.id }
     );
-    if (changes === 0) throw explainNoChange(id, 'prepared');
+    if (changes === 0) {
+      throw explainNoChange(id, 'prepared');
+    }
     addDocHistory('IS', id, 'prepared', 'released', user.id, null);
     const slip = db.get(
       `SELECT s.SlipNumber, r.RequestedBy FROM IssuanceSlip s
@@ -147,11 +167,15 @@ function releaseSlip(user, id) {
   });
 }
 
-// A slip made by mistake can be cancelled until the items are released.
 function cancelSlip(user, id) {
   return db.transaction(() => {
-    const { changes } = db.run(`UPDATE IssuanceSlip SET Status = 'cancelled' WHERE SlipId = @id AND Status = 'prepared'`, { id });
-    if (changes === 0) throw explainNoChange(id, 'prepared');
+    const { changes } = db.run(
+      `UPDATE IssuanceSlip SET Status = 'cancelled' WHERE SlipId = @id AND Status = 'prepared'`,
+      { id }
+    );
+    if (changes === 0) {
+      throw explainNoChange(id, 'prepared');
+    }
     addDocHistory('IS', id, 'prepared', 'cancelled', user.id, null);
     return { id, status: 'cancelled' };
   });
@@ -159,22 +183,25 @@ function cancelSlip(user, id) {
 
 const STOCK_MISMATCH = 'The stock record does not match this slip. Ask the warehouse to check it.';
 
-// Takes one slip line out of stock. The reservation is used up and the stock leaves together,
-// so Available stays correct. Throws if the stock or the requisition no longer matches the slip.
+// Deducts issued quantity from OnHand and Reserved, and logs transaction.
 function issueLine(line, head, slipId) {
   const moved = db.run(
     `UPDATE Item SET OnHand = ROUND(OnHand - @qty, 2), Reserved = ROUND(Reserved - @qty, 2)
      WHERE ItemId = @itemId AND Reserved + 0.001 >= @qty AND OnHand + 0.001 >= @qty`,
     { itemId: line.ItemId, qty: line.Quantity }
   );
-  if (moved.changes === 0) throw new HttpError(409, STOCK_MISMATCH);
+  if (moved.changes === 0) {
+    throw new HttpError(409, STOCK_MISMATCH);
+  }
 
   const counted = db.run(
     `UPDATE RequisitionLine SET QtyIssued = ROUND(QtyIssued + @qty, 2)
      WHERE LineId = @lineId AND QtyIssued + @qty <= QtyReserved + 0.001`,
     { lineId: line.RequisitionLineId, qty: line.Quantity }
   );
-  if (counted.changes === 0) throw new HttpError(409, STOCK_MISMATCH);
+  if (counted.changes === 0) {
+    throw new HttpError(409, STOCK_MISMATCH);
+  }
 
   db.run(
     `INSERT INTO StockTransaction (ItemId, TxType, Quantity, RefDocType, RefDocId, ProjectId, CreatedBy, Note)
@@ -183,28 +210,31 @@ function issueLine(line, head, slipId) {
   );
 }
 
-// Closes the requisition when every line is fully issued, otherwise marks it partly fulfilled.
-// Returns the requisition's new status.
+// Closes requisition when all lines are fully issued, or marks it partly fulfilled.
 function updateRequisitionStatus(head, userId) {
-  const remaining = db.get(
+  const countRow = db.get(
     'SELECT COUNT(*) AS n FROM RequisitionLine WHERE RequisitionId = @rid AND QtyIssued + 0.001 < Quantity',
     { rid: head.RequisitionId }
-  ).n;
+  );
+  const remaining = countRow.n;
   const nextStatus = remaining > 0 ? 'partly_fulfilled' : 'fulfilled';
   const rf = db.get('SELECT Status FROM Requisition WHERE RequisitionId = @rid', { rid: head.RequisitionId });
   if (rf.Status !== nextStatus) {
-    db.run(`UPDATE Requisition SET Status = @status, UpdatedAt = ${NOW} WHERE RequisitionId = @rid`,
-      { status: nextStatus, rid: head.RequisitionId });
+    db.run(
+      `UPDATE Requisition SET Status = @status, UpdatedAt = ${NOW} WHERE RequisitionId = @rid`,
+      { status: nextStatus, rid: head.RequisitionId }
+    );
     addDocHistory('RF', head.RequisitionId, rf.Status, nextStatus, userId, `Items issued on ${head.SlipNumber}`);
   }
   return nextStatus;
 }
 
-// The requestor confirms receipt. This is the "signed acknowledgment": who, when, and optional remarks.
-// In the same transaction: deduct stock, log it, count what was issued, and close the requisition when done.
+// Requestor confirms receipt; stock is deducted and logged in this transaction.
 function acknowledgeSlip(user, id, remarksText) {
   const remarks = String(remarksText || '').trim();
-  if (remarks.length > 200) throw new HttpError(400, 'Remarks can be up to 200 characters.');
+  if (remarks.length > 200) {
+    throw new HttpError(400, 'Remarks can be up to 200 characters.');
+  }
 
   return db.transaction(() => {
     const head = db.get(
@@ -213,9 +243,15 @@ function acknowledgeSlip(user, id, remarksText) {
        WHERE s.SlipId = @id`,
       { id }
     );
-    if (!head) throw new HttpError(404, 'Slip not found.');
-    if (head.RequestedBy !== user.id) throw new HttpError(403, 'Only the requestor can confirm receipt.');
-    if (head.Status !== 'released') throw new HttpError(409, 'This slip is not waiting for confirmation.');
+    if (!head) {
+      throw new HttpError(404, 'Slip not found.');
+    }
+    if (head.RequestedBy !== user.id) {
+      throw new HttpError(403, 'Only the requestor can confirm receipt.');
+    }
+    if (head.Status !== 'released') {
+      throw new HttpError(409, 'This slip is not waiting for confirmation.');
+    }
 
     db.run(
       `UPDATE IssuanceSlip SET Status = 'acknowledged', AcknowledgedBy = @userId, AcknowledgedAt = ${NOW}, Remarks = @remarks
@@ -236,4 +272,12 @@ function acknowledgeSlip(user, id, remarksText) {
   });
 }
 
-module.exports = { listReleasable, listSlips, getSlip, prepareSlip, releaseSlip, cancelSlip, acknowledgeSlip };
+module.exports = {
+  listReleasable,
+  listSlips,
+  getSlip,
+  prepareSlip,
+  releaseSlip,
+  cancelSlip,
+  acknowledgeSlip,
+};
