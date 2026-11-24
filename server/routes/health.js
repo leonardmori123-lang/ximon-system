@@ -1,4 +1,4 @@
-// Open /api/health in the browser to prove the server can read the database.
+// Health check route to verify database connection.
 const express = require('express');
 const db = require('../db');
 

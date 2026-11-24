@@ -1,3 +1,4 @@
+// Main Express server and route setup.
 require('dotenv').config({ quiet: true });
 const os = require('os');
 const path = require('path');
@@ -17,13 +18,12 @@ app.use(
   })
 );
 
-// Bootstrap is served from node_modules so the app works without internet at the demo.
+// Serve Bootstrap from local files so the app works offline.
 app.use('/vendor/bootstrap', express.static(path.join(__dirname, '..', 'node_modules', 'bootstrap', 'dist')));
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
 app.use('/api/health', require('./routes/health'));
 app.use('/api', require('./routes/auth'));
-// Module routes: one file per module, each checking the role first.
 app.use('/api/projects', require('./routes/projects'));
 app.use('/api/items', require('./routes/items'));
 app.use('/api/requisitions', require('./routes/requisitions'));
@@ -31,12 +31,20 @@ app.use('/api/slips', require('./routes/slips'));
 app.use('/api/purchasing', require('./routes/purchasing'));
 app.use('/api/notifications', require('./routes/notifications'));
 
-// Turns a thrown HttpError (400, 403, 404, 409) into a JSON message. Anything else is a 500.
+// Global error handler to convert errors into JSON messages.
 app.use((err, req, res, next) => {
-  if (res.headersSent) return next(err);
-  if (err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Bad request.' });
-  if (err.status && err.status < 500) return res.status(err.status).json({ error: err.message });
-  if (db.isUniqueError(err)) return res.status(409).json({ error: 'That record already exists.' });
+  if (res.headersSent) {
+    return next(err);
+  }
+  if (err.type === 'entity.parse.failed') {
+    return res.status(400).json({ error: 'Bad request.' });
+  }
+  if (err.status && err.status < 500) {
+    return res.status(err.status).json({ error: err.message });
+  }
+  if (db.isUniqueError(err)) {
+    return res.status(409).json({ error: 'That record already exists.' });
+  }
   console.error(err);
   res.status(500).json({ error: 'Server error. Please try again.' });
 });

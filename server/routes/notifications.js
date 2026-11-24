@@ -1,3 +1,4 @@
+// Routes for user notifications and unread counters.
 const express = require('express');
 const { requireLogin } = require('../auth');
 const { parseId } = require('../services/errors');
@@ -5,7 +6,6 @@ const notes = require('../services/notifications');
 
 const router = express.Router();
 
-// A light call the top bar makes every 30 seconds.
 router.get('/count', requireLogin, (req, res) => {
   res.json({ unread: notes.unreadCount(req.session.user.id) });
 });

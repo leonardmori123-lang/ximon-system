@@ -1,3 +1,4 @@
+// Routes for issuance slips and warehouse handoff.
 const express = require('express');
 const { ROLES, requireRole } = require('../auth');
 const { parseId } = require('../services/errors');
@@ -6,7 +7,7 @@ const issuance = require('../services/issuance');
 const router = express.Router();
 const READERS = [ROLES.OWNER, ROLES.CUSTODIAN, ROLES.FOREMAN];
 
-// Must stay above '/:id', or "releasable" would be read as a slip id.
+// Placed before /:id so releasable is not matched as an id.
 router.get('/releasable', requireRole(ROLES.CUSTODIAN), (req, res) => {
   res.json(issuance.listReleasable());
 });
@@ -20,7 +21,8 @@ router.get('/:id', requireRole(...READERS), (req, res) => {
 });
 
 router.post('/', requireRole(ROLES.CUSTODIAN), (req, res) => {
-  const requisitionId = parseId((req.body || {}).requisitionId, 'Choose a requisition.');
+  const body = req.body || {};
+  const requisitionId = parseId(body.requisitionId, 'Choose a requisition.');
   res.status(201).json(issuance.prepareSlip(req.session.user, requisitionId));
 });
 
@@ -33,7 +35,8 @@ router.post('/:id/cancel', requireRole(ROLES.CUSTODIAN), (req, res) => {
 });
 
 router.post('/:id/acknowledge', requireRole(ROLES.FOREMAN), (req, res) => {
-  res.json(issuance.acknowledgeSlip(req.session.user, parseId(req.params.id), (req.body || {}).remarks));
+  const body = req.body || {};
+  res.json(issuance.acknowledgeSlip(req.session.user, parseId(req.params.id), body.remarks));
 });
 
 module.exports = router;

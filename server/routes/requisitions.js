@@ -1,3 +1,4 @@
+// Routes for material requisition forms.
 const express = require('express');
 const { ROLES, requireRole } = require('../auth');
 const { parseId } = require('../services/errors');
@@ -5,7 +6,6 @@ const rf = require('../services/requisitions');
 
 const router = express.Router();
 
-// Foreman files and revises; owner reads everything and decides. Other roles come in later builds.
 router.get('/', requireRole(ROLES.OWNER, ROLES.FOREMAN), (req, res) => {
   res.json(rf.listRequisitions(req.session.user, req.query.status));
 });
@@ -27,16 +27,19 @@ router.post('/:id/approve', requireRole(ROLES.OWNER), (req, res) => {
 });
 
 router.post('/:id/return', requireRole(ROLES.OWNER), (req, res) => {
-  res.json(rf.returnRequisition(req.session.user, parseId(req.params.id), (req.body || {}).reason));
+  const body = req.body || {};
+  res.json(rf.returnRequisition(req.session.user, parseId(req.params.id), body.reason));
 });
 
 router.post('/:id/cancel', requireRole(ROLES.FOREMAN), (req, res) => {
-  res.json(rf.cancelRequisition(req.session.user, parseId(req.params.id), (req.body || {}).reason));
+  const body = req.body || {};
+  res.json(rf.cancelRequisition(req.session.user, parseId(req.params.id), body.reason));
 });
 
-// The owner cancels an approved requisition; what was reserved for it is released.
+// Owner cancels an approved requisition and releases reserved stock.
 router.post('/:id/cancel-approved', requireRole(ROLES.OWNER), (req, res) => {
-  res.json(rf.cancelApprovedRequisition(req.session.user, parseId(req.params.id), (req.body || {}).reason));
+  const body = req.body || {};
+  res.json(rf.cancelApprovedRequisition(req.session.user, parseId(req.params.id), body.reason));
 });
 
 module.exports = router;
