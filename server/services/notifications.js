@@ -1,27 +1,25 @@
-// In-app notifications, shared by every module.
-//
-//   notifyUser(userId, 'RF-2026-0001 was approved.', '/requisition.html?id=1')
-//   notifyRole('owner', 'RF-2026-0002 needs your approval.', '/requisition.html?id=2')   // every active owner
-//
-// Call them inside the same db.transaction() as the change they announce, so a notification is
-// never saved for something that was undone. Purchasing: call notifyRole('purchaser', ...) from
-// createPurchaseRequisition in handoff.js, and later for late deliveries and discrepancies.
+// In-app notifications for users and roles.
 const db = require('../db');
 const { HttpError } = require('./errors');
 
 function notifyUser(userId, message, linkUrl) {
-  db.run('INSERT INTO Notification (UserId, Message, LinkUrl) VALUES (@userId, @message, @linkUrl)',
-    { userId, message, linkUrl: linkUrl || null });
+  db.run('INSERT INTO Notification (UserId, Message, LinkUrl) VALUES (@userId, @message, @linkUrl)', {
+    userId,
+    message,
+    linkUrl: linkUrl || null,
+  });
 }
 
 function notifyRole(role, message, linkUrl) {
-  for (const person of db.all('SELECT UserId FROM AppUser WHERE Role = @role AND IsActive = 1', { role })) {
+  const users = db.all('SELECT UserId FROM AppUser WHERE Role = @role AND IsActive = 1', { role });
+  for (const person of users) {
     notifyUser(person.UserId, message, linkUrl);
   }
 }
 
 function unreadCount(userId) {
-  return db.get('SELECT COUNT(*) AS n FROM Notification WHERE UserId = @userId AND ReadAt IS NULL', { userId }).n;
+  const row = db.get('SELECT COUNT(*) AS n FROM Notification WHERE UserId = @userId AND ReadAt IS NULL', { userId });
+  return row.n;
 }
 
 function listFor(userId, limit = 50) {
@@ -32,26 +30,27 @@ function listFor(userId, limit = 50) {
   );
 }
 
-// People can only read their own notifications.
+// Users can only mark their own notifications as read.
 function markRead(userId, id) {
-  const { changes } = db.run(
+  const result = db.run(
     `UPDATE Notification SET ReadAt = datetime('now','localtime')
      WHERE NotificationId = @id AND UserId = @userId AND ReadAt IS NULL`,
     { id, userId }
   );
-  // Nothing changed: it was already read (fine), or it is not this person's notification (404).
-  if (changes === 0) {
+  if (result.changes === 0) {
     const mine = db.get('SELECT 1 AS ok FROM Notification WHERE NotificationId = @id AND UserId = @userId', { id, userId });
-    if (!mine) throw new HttpError(404, 'Notification not found.');
+    if (!mine) {
+      throw new HttpError(404, 'Notification not found.');
+    }
   }
 }
 
 function markAllRead(userId) {
-  const { changes } = db.run(
+  const result = db.run(
     `UPDATE Notification SET ReadAt = datetime('now','localtime') WHERE UserId = @userId AND ReadAt IS NULL`,
     { userId }
   );
-  return { marked: changes };
+  return { marked: result.changes };
 }
 
 module.exports = { notifyUser, notifyRole, unreadCount, listFor, markRead, markAllRead };

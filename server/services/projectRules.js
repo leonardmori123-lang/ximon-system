@@ -1,25 +1,28 @@
-// Project rules that need no database, so they are easy to test.
-// Money is whole centavos: PHP 4,500.00 is 450000.
+// Validation rules for construction project records and budgets.
 const { HttpError } = require('./errors');
 
 const PROJECT_STATUSES = ['active', 'closed'];
 const MAX_BUDGET_CENTAVOS = 100000000000; // PHP 1,000,000,000
 
-// Checks the project form. creating: the code is part of the form; after that it never changes.
-// A budget of 0 means none was set, so no purchase is flagged as over budget.
-function validateProjectInput(body, { creating }) {
+// Money is stored in centavos (PHP 1.00 = 100 centavos).
+function validateProjectInput(body, options = {}) {
+  const creating = Boolean(options.creating);
   const input = body || {};
   const project = {};
 
   if (creating) {
-    project.code = String(input.code == null ? '' : input.code).trim().toUpperCase();
+    const rawCode = input.code == null ? '' : input.code;
+    project.code = String(rawCode).trim().toUpperCase();
     if (!/^[A-Z0-9][A-Z0-9-]{1,29}$/.test(project.code)) {
       throw new HttpError(400, 'Project code: 2 to 30 characters, letters, digits and dashes only, like ADC-RECEPTION.');
     }
   }
 
-  project.name = String(input.name == null ? '' : input.name).trim();
-  if (!project.name || project.name.length > 200) throw new HttpError(400, 'Enter the project name, up to 200 characters.');
+  const rawName = input.name == null ? '' : input.name;
+  project.name = String(rawName).trim();
+  if (!project.name || project.name.length > 200) {
+    throw new HttpError(400, 'Enter the project name, up to 200 characters.');
+  }
 
   const budget = input.materialBudgetCentavos;
   if (budget === undefined && creating) {
@@ -33,7 +36,9 @@ function validateProjectInput(body, { creating }) {
   if (creating) {
     project.status = 'active';
   } else {
-    if (!PROJECT_STATUSES.includes(input.status)) throw new HttpError(400, 'Choose Active or Closed.');
+    if (!PROJECT_STATUSES.includes(input.status)) {
+      throw new HttpError(400, 'Choose Active or Closed.');
+    }
     project.status = input.status;
   }
   return project;

@@ -1,8 +1,7 @@
-// Document numbers: RF-2026-0001, IS-..., later PR, PO, RR.
-// Call it inside db.transaction() so the number is taken in the same transaction that saves
-// the document; two people can then never get the same number.
+// Sequential document number generation.
 const db = require('../db');
 
+// Call inside a transaction so concurrent requests do not receive the same number.
 function nextNumber(docType, year = new Date().getFullYear()) {
   db.run('INSERT OR IGNORE INTO NumberSequence (DocType, DocYear, LastNumber) VALUES (@docType, @year, 0)', { docType, year });
   const row = db.get(

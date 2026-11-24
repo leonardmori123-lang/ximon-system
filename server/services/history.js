@@ -1,4 +1,4 @@
-// One row per status change for any document: RF (requisition), IS (issuance slip), later PR, PO, RR.
+// Audit trail of document status changes.
 const db = require('../db');
 
 function addDocHistory(docType, docId, from, to, userId, reason) {
@@ -9,7 +9,7 @@ function addDocHistory(docType, docId, from, to, userId, reason) {
   );
 }
 
-// All status changes of one document, oldest first. The pages show this as the History table.
+// Returns all status changes for a document, ordered oldest to newest.
 function getDocHistory(docType, docId) {
   return db.all(
     `SELECT h.FromStatus, h.ToStatus, u.FullName AS ChangedByName, substr(h.ChangedAt, 1, 16) AS ChangedAt, h.Reason
