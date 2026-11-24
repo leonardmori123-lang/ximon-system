@@ -1,6 +1,4 @@
-// npm run setup-db
-// Creates the database file (data/ximon.db) if it is missing, runs every file in db/ in order,
-// and adds one test user per role. Safe to run again: it never deletes or duplicates anything.
+// Sets up the database, runs the SQL files, and adds test users; safe to run again.
 require('dotenv').config({ quiet: true });
 const fs = require('node:fs');
 const path = require('node:path');
@@ -16,11 +14,18 @@ const SEED_USERS = [
 ];
 
 function setup({ quiet = false } = {}) {
-  const say = (text) => { if (!quiet) console.log(text); };
+  function say(text) {
+    if (!quiet) {
+      console.log(text);
+    }
+  }
   const seedPassword = process.env.SEED_PASSWORD || 'ximon123';
 
   const dir = path.join(__dirname, '..', 'db');
-  for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.sql')).sort()) {
+  const sqlFiles = fs.readdirSync(dir)
+    .filter((file) => file.endsWith('.sql'))
+    .sort();
+  for (const file of sqlFiles) {
     db.exec(fs.readFileSync(path.join(dir, file), 'utf8'));
     say(`Ran ${file}`);
   }
@@ -33,10 +38,10 @@ function setup({ quiet = false } = {}) {
       { fullName: user.fullName, username: user.username, hash, role: user.role }
     );
   }
-  say(`Test users ready: ${SEED_USERS.map((u) => u.username).join(', ')}`);
+  const usernames = SEED_USERS.map((user) => user.username);
+  say(`Test users ready: ${usernames.join(', ')}`);
 
-  // Items that already have stock but no stock transactions get one "opening" row,
-  // so the stock log always adds up to the Item list.
+  // Items with stock but no log get one opening row, so the log still adds up.
   const firstUser = db.get('SELECT MIN(UserId) AS id FROM AppUser').id;
   db.run(
     `INSERT INTO StockTransaction (ItemId, TxType, Quantity, CreatedBy, Note)
