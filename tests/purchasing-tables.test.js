@@ -1,5 +1,4 @@
-// Checks db/40_purchasing.sql on a throw-away database: it loads twice, the sample prices rebuild
-// the client's PO to the cent, and the table checks refuse bad rows.
+// Checks db/40_purchasing.sql: it loads twice, sample prices rebuild the PO, and checks refuse bad rows.
 process.env.DB_FILE = ':memory:';
 const test = require('node:test');
 const assert = require('node:assert');

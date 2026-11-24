@@ -1,5 +1,4 @@
-// Cancelling a requisition: the foreman while it is pending (or returned), the owner after approval.
-// Real database and real server. Each test uses its own item so the stock numbers do not mix.
+// Cancelling an RF: the foreman while pending or returned, the owner after approval; each test uses its own item.
 const test = require('node:test');
 const assert = require('node:assert');
 const bcrypt = require('bcryptjs');
@@ -134,7 +133,6 @@ test('the owner cancels an approved requisition: reserved stock is free again, a
   assert.ok(!slips.listReleasable().some((r) => r.RequisitionId === id));
   assert.match(await errorOf(await call('POST', '/api/slips', custodian, { requisitionId: id }), 409), /approved requisition/);
 
-  // The page data agrees.
   const page = await json(await call('GET', `/api/requisitions/${id}`, foreman), 200);
   assert.strictEqual(page.Status, 'cancelled');
   assert.deepStrictEqual(page.lines.map((l) => [l.QtyReserved, l.QtyShort]), [[0, 0]]);
@@ -157,7 +155,7 @@ test('a requisition with a shortage: the reserved part is released, the purchase
   assert.strictEqual(prBefore.length, 1);
   assert.deepStrictEqual(prLinesBefore, [{ ItemId: itemId('HDPE-003'), ShortQty: 2 }]);
 
-  // The purchase requisition shows the state of the requisition behind it, to the purchaser and to the owner.
+  // The PR shows its RF's status to both the purchaser and the owner.
   const purchaser = await loginAs('purchaser1');
   const prId = db.get('SELECT PurchaseRequisitionId AS id FROM PurchaseRequisition WHERE RequisitionId = @id', { id }).id;
   const seen = async (cookie) => ({
@@ -175,7 +173,7 @@ test('a requisition with a shortage: the reserved part is released, the purchase
   assert.deepStrictEqual(prLines(id), prLinesBefore);
   assert.deepStrictEqual(lastNote('purchaser1'), { Message: `${rfNumber} was cancelled. ${prBefore[0].PrNumber} was made for it and has not been changed.`, LinkUrl: '/prs.html' });
 
-  // Delivery later brings the 2 pieces: they go on the shelf and are not set aside for the cancelled RF.
+  // Delivered pieces go on the shelf, not aside for the cancelled RF.
   const delivered = db.transaction(() => {
     receipts.receiveStock({ itemId: itemId('HDPE-003'), quantity: 2, sourceDocument: { type: 'RR', id: 1, number: 'RR-TEST' }, userId: user('purchaser1').id });
     return receipts.allocateToRequisition({ requisitionId: id, lines: [{ itemId: itemId('HDPE-003'), quantity: 2 }], userId: user('purchaser1').id });
@@ -197,7 +195,7 @@ test('other requisitions hold part of the same stock: a cancel frees only its ow
   assert.deepStrictEqual(lines(held.id).map((l) => l.QtyReserved), [4]);
   assert.strictEqual(row(held.id).Status, 'approved');
 
-  // A requisition for 14 takes the 3 that are free and waits for 11 more through a purchase requisition.
+  // A request for 14 takes the 3 free pieces and waits for 11 through a PR.
   const big = await approvedRf(foreman, owner, [['ACU-001', 14]]);
   assert.deepStrictEqual(lines(big.id).map((l) => [l.QtyReserved, l.QtyShort]), [[3, 11]]);
   assert.deepStrictEqual(item('ACU-001'), { OnHand: 7, Reserved: 7 }, 'the 3 freed pieces were taken again');
@@ -306,7 +304,7 @@ test('the owner cancel: reason needed, wrong states refused, owner only; every r
   await json(await ownerCancel(owner, 'abc', 'Test reason'), 400);
   assert.strictEqual(snapshot(), before);
 
-  // A pending and a returned requisition are not for this route: the owner returns those.
+  // Pending and returned RFs are not for this route; the owner returns those.
   const pending = await fileRf(foreman, [['ACU-001', 1]]);
   assert.match(await errorOf(await ownerCancel(owner, pending.id, 'Test reason'), 409), /pending.*must be approved/);
   const returned = await fileRf(foreman, [['ACU-001', 1]]);
@@ -330,7 +328,7 @@ test('if the stock record is out of step, the cancel is refused and nothing is h
   // Free everything held by earlier RFs on this item, then reserve once.
   db.run(`UPDATE RequisitionLine SET QtyReserved = 0, QtyShort = 0 WHERE ItemId = @id`, { id: itemId('HDPE-001') });
   const { id } = await approvedRf(foreman, owner, [['HDPE-001', 4]]);
-  // Break the record on purpose: the item says less is reserved than the requisition holds.
+  // Break the record on purpose: the item shows less reserved than the RF holds.
   db.run(`UPDATE Item SET Reserved = 1 WHERE Code = 'HDPE-001'`);
   const slipsBefore = db.get('SELECT COUNT(*) AS n FROM IssuanceSlip').n;
 

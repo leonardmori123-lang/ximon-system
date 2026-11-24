@@ -1,5 +1,4 @@
-// Stock adjustment: the custodian fixes a wrong count. Real database, real SQL.
-// Tests in one file share a database, so each test reads the current On hand instead of assuming 10.
+// Stock adjustment: the custodian fixes a wrong count; tests share a database, so read current On hand.
 const test = require('node:test');
 const assert = require('node:assert');
 const { db, start, stop, loginAs, call, user, item, itemId, rfBody } = require('./helpers');
@@ -201,7 +200,7 @@ test('a count below Reserved is refused and sends nothing', () => {
 });
 
 test('if the notification cannot be saved, the whole adjustment is undone (same transaction)', () => {
-  // a trigger that makes the notification insert fail, only for a reason that contains FAIL-NOTICE
+  // A trigger fails inserts whose message contains FAIL-NOTICE.
   db.exec(`CREATE TRIGGER fail_adjust_notice BEFORE INSERT ON Notification WHEN NEW.Message LIKE '%FAIL-NOTICE%'
            BEGIN SELECT RAISE(ABORT, 'notice failed'); END`);
   try {

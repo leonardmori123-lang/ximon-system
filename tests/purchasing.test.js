@@ -1,6 +1,4 @@
-// Purchasing, build steps 1 to 5: the purchase requisition made from an RF shortage, suppliers and
-// their prices, pricing a purchase requisition, the owner's decision on it (approve, hold, cancel),
-// and the purchase order made from an approved one. Real database, real server.
+// Purchasing steps 1 to 5: PR from a shortage, suppliers and prices, decisions, and the PO.
 const test = require('node:test');
 const assert = require('node:assert');
 const { db, start, stop, loginAs, call, itemId, projectId, rfBody, user } = require('./helpers');
@@ -8,9 +6,7 @@ const rules = require('../server/services/purchasingRules');
 const { createPurchaseRequisition } = require('../server/services/handoff');
 
 test.before(start);
-// The sample project's small budget would make most of these older tests approve over budget. They are about
-// other things, so the sample project gets no budget here (0 means nothing is checked). The budget tests at the
-// end make projects of their own.
+// Clear the sample budget: these tests are not about budget checks. Budget tests make their own projects.
 test.before(() => db.run('UPDATE Project SET MaterialBudgetCentavos = 0'));
 test.after(stop);
 
@@ -401,7 +397,7 @@ test('approve: refused until every line is priced; then the PR is approved, logg
     { FromStatus: 'pending', ToStatus: 'approved', Reason: null },
   ]);
 
-  // The purchaser is told on the PR page. The foreman is told on the RF page (he cannot open the PR page), with no money in it.
+  // The purchaser is told on the PR page; the foreman on his RF page, without money.
   const toPurchaser = notices('purchaser1', `${prNumber} was approved%`);
   assert.deepStrictEqual(toPurchaser.map((n) => ({ ...n })), [{ Message: `${prNumber} was approved.`, LinkUrl: `/pr.html?id=${prId}` }]);
   const toForeman = notices('foreman1', `${prNumber} for%`);
@@ -508,7 +504,7 @@ test('cancel: needs a reason, works on a pending or a held PR, refuses a decided
   await json(await call('PUT', `/api/purchasing/prs/${a.prId}/prices`, purchaser, body), 409);
   assert.strictEqual((await json(await call('GET', `/api/purchasing/prs/${a.prId}`, purchaser), 200)).canPrice, false);
 
-  // The RF is untouched: same status, same lines, and the Document Trail shows the PR as cancelled (number and status only).
+  // The RF is untouched; the trail shows the PR as cancelled (number and status only).
   assert.deepStrictEqual(rfState(), rfBefore);
   const trail = await json(await call('GET', `/api/requisitions/${a.rf.id}`, foreman), 200);
   assert.deepStrictEqual(trail.purchaseRequisitions, [{ PrNumber: prNumber, Status: 'cancelled' }]);
@@ -542,15 +538,15 @@ test('the PO discount is exact to the centavo, rounded half up', () => {
   assert.strictEqual(rules.poDiscount(1, 50), 1, '0.5 rounds up');
   assert.strictEqual(rules.poDiscount(3, 50), 2, '1.5 rounds up');
   assert.strictEqual(rules.poDiscount(5000, 0.07), 4, '3.5 rounds up');
-  // Plain floating point gets these wrong (5000 * 0.57 is 2849.9999999999995, so it rounds the 28.5 down to 28).
+  // Floating point gets these wrong: 5000 * 0.57 rounds 28.5 down to 28.
   assert.strictEqual(rules.poDiscount(5000, 0.57), 29);
   assert.strictEqual(rules.poDiscount(11000, 0.35), 39);
   assert.strictEqual(rules.poDiscount(25000, 0.29), 73);
-  // Compare with exact whole-number arithmetic for many subtotals and percents.
+  // Compare against exact whole-number arithmetic.
   for (const percent of [0.01, 0.07, 12.34, 33.33, 58, 99.99, 100]) {
     const hundredths = BigInt(Math.round(percent * 100));
     for (let subtotal = 0; subtotal <= 3000; subtotal += 1) {
-      const exact = Number((2n * BigInt(subtotal) * hundredths + 10000n) / 20000n); // floor((2a + b) / 2b) is a / b rounded half up
+      const exact = Number((2n * BigInt(subtotal) * hundredths + 10000n) / 20000n); // rounds half up
       assert.strictEqual(rules.poDiscount(subtotal, percent), exact, `${subtotal} at ${percent}%`);
     }
   }
@@ -695,7 +691,7 @@ test('a PO is made only from an approved PR, only once; a refusal writes nothing
   assert.strictEqual((await call('POST', '/api/purchasing/prs/abc/po', purchaser, {})).status, 400);
   assert.deepStrictEqual(poCounts(), before, 'the refusals wrote nothing');
 
-  // One PO per PR. The second try is refused and names the first PO.
+  // One PO per PR; the second try names the first PO.
   const a = await approvedPr();
   const first = await json(await makePo(purchaser, a.prId), 201);
   const again = await makePo(purchaser, a.prId);
@@ -703,7 +699,7 @@ test('a PO is made only from an approved PR, only once; a refusal writes nothing
   assert.ok((await again.json()).error.includes(first.poNumber));
   assert.strictEqual(db.get('SELECT COUNT(*) AS n FROM PurchaseOrder WHERE PurchaseRequisitionId = @id', { id: a.prId }).n, 1);
 
-  // The refusals above took no number: the next PO is the next number.
+  // Refusals take no number, so the next PO gets the next number.
   const b = await approvedPr();
   const second = await json(await makePo(purchaser, b.prId), 201);
   assert.strictEqual(Number(second.poNumber.slice(-4)), Number(first.poNumber.slice(-4)) + 1);
@@ -724,7 +720,7 @@ test('one PO per PR is also held by the database: a second PO for the same PR is
   assert.deepStrictEqual(poCounts(), before, 'the refused insert wrote nothing');
   assert.strictEqual(db.get('SELECT PoNumber FROM PurchaseOrder WHERE PurchaseRequisitionId = @id', { id: a.prId }).PoNumber, first.poNumber);
 
-  // A PO with no PR is still allowed more than once (rolled back, so the other tests see nothing).
+  // A PO with no PR may repeat (rolled back, so other tests see nothing).
   class Undo extends Error {}
   assert.throws(() => db.transaction(() => {
     insertPo('PO-9999-0002', null);
@@ -775,7 +771,7 @@ test('PO pages: the purchaser, the owner and the verifier can read POs, nobody e
     assert.strictEqual((await call('GET', '/api/purchasing/pos', cookie)).status, 200, `${who} list`);
     assert.strictEqual((await call('GET', `/api/purchasing/pos/${poId}`, cookie)).status, 200, `${who} detail`);
   }
-  // Reading is all the verifier gets: no PO can be made by this role, and the PR pages stay closed to it.
+  // The verifier only reads: no PO creation, no PR pages.
   const verifier = await loginAs('verifier1');
   assert.strictEqual((await makePo(verifier, 1)).status, 403);
   assert.strictEqual((await call('GET', '/api/purchasing/prs', verifier)).status, 403);

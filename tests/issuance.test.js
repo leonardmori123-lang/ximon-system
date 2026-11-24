@@ -12,8 +12,7 @@ const rejects = (fn, status, text) => assert.throws(fn, (e) => e.status === stat
 const rfRow = (id) => rf.getRequisition(owner, id);
 const approved = (lines) => { const { id } = rf.createRequisition(foreman, rfBody(lines)); rf.approveRequisition(owner, id); return id; };
 
-// The stock log must always add up to what is on the shelf.
-// Always ROUND a SUM of decimals: 0.3 - 0.1 - 0.2 is -2.7e-17 in floating point, not 0. (+ 0 turns -0 into 0.)
+// The log must match stock; ROUND decimal sums (0.3 - 0.1 - 0.2 is -2.7e-17) and add 0 to avoid -0.
 function assertLogMatchesStock() {
   const rows = db.all(`SELECT i.Code, i.OnHand, ROUND(COALESCE(SUM(t.Quantity), 0), 2) AS Logged
                        FROM Item i LEFT JOIN StockTransaction t ON t.ItemId = i.ItemId GROUP BY i.ItemId`);

@@ -1,6 +1,4 @@
-// recordPoReceipt: what Purchasing does when Delivery receives goods against a purchase order.
-// Real database, real server. Purchase orders are made the way the screens make them (RF, PR, prices,
-// approval, PO), so the lines are exactly what Delivery will find.
+// recordPoReceipt: how Purchasing handles a Delivery receipt against a PO, made the way the screens make it.
 const test = require('node:test');
 const assert = require('node:assert');
 const { db, start, stop, loginAs, call, user, itemId, rfBody } = require('./helpers');
@@ -8,7 +6,7 @@ const { recordPoReceipt } = require('../server/services/poReceipts');
 const { createPurchaseRequisition } = require('../server/services/handoff');
 
 test.before(async () => {
-  db.run('UPDATE Project SET MaterialBudgetCentavos = 0'); // the budget check is not what these tests are about
+  db.run('UPDATE Project SET MaterialBudgetCentavos = 0'); // budget checks are not the point here
   await start();
 });
 test.after(stop);
@@ -17,7 +15,7 @@ const verifier = user('verifier1');
 const json = async (res, status) => { assert.strictEqual(res.status, status, await res.clone().text()); return res.json(); };
 const rejects = (fn, status, text) => assert.throws(fn, (e) => e.status === status && (!text || e.message.includes(text)), `expected ${status} ${text || ''}`);
 
-// The seeded supplier prices a PR, the owner approves it, the purchaser makes the PO. Returns the PO id.
+// Prices, approves and makes a PO from a PR; returns the PO id.
 async function poFromPr(prId) {
   const purchaser = await loginAs('purchaser1');
   const owner = await loginAs('owner1');
@@ -30,7 +28,7 @@ async function poFromPr(prId) {
   return (await json(await call('POST', `/api/purchasing/prs/${prId}/po`, purchaser, {}), 201)).id;
 }
 
-// An approved RF with no stock behind it, so every line is short. rows: [['ACU-001', 2]]. Returns { poId, rfId }.
+// An approved RF with no stock (all lines short). rows: [['ACU-001', 2]]. Returns { poId, rfId }.
 async function poWithRf(rows) {
   for (const [code] of rows) db.run('UPDATE Item SET OnHand = 0, Reserved = 0 WHERE Code = @code', { code });
   const rf = await json(await call('POST', '/api/requisitions', await loginAs('foreman1'), rfBody(rows)), 201);
@@ -89,7 +87,7 @@ test('a partial delivery makes it partly delivered, and it closes only when ever
   assert.strictEqual(last.poStatus, 'closed');
   assert.deepStrictEqual(lines(poId).map((l) => l.QtyReceived), [5, 3]);
 
-  // A history row is written only when the status changes, and it names the report that changed it.
+  // History rows appear only on status changes and name the report.
   assert.deepStrictEqual(history(poId).map((h) => [h.FromStatus, h.ToStatus, h.Reason]), [
     [null, 'open', null],
     ['open', 'partly_delivered', 'Received on RR-TEST-2'],

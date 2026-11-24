@@ -1,5 +1,4 @@
-// Shared by the tests: a fresh in-memory database with the real tables and the five test users,
-// and the real server on a random port. Nothing is faked, so the real SQL runs.
+// Shared test setup: a real in-memory database, five users, and a server on a random port.
 process.env.DB_FILE = ':memory:';
 process.env.SEED_PASSWORD = 'secret123';
 process.env.SESSION_SECRET = 'test';
@@ -36,12 +35,12 @@ function call(method, url, cookie, body) {
   });
 }
 
-// Like call, but sends the text exactly as given (to test broken JSON).
+// Sends raw text, for testing broken JSON.
 function callRaw(method, url, cookie, text) {
   return fetch(base + url, { method, headers: { 'Content-Type': 'application/json', ...(cookie && { Cookie: cookie }) }, body: text });
 }
 
-// A user object like the one the session holds: { id, role }.
+// Returns the { id, role } shape a session holds.
 function user(username) {
   const row = db.get('SELECT UserId, Role FROM AppUser WHERE Username = @username', { username });
   return { id: row.UserId, role: row.Role };

@@ -6,7 +6,7 @@ const path = require('node:path');
 
 const PUBLIC = path.join(__dirname, '..', 'public');
 
-// Reads the ROLE_SCREENS table out of app.js without running the page code.
+// Reads ROLE_SCREENS from app.js without running the page code.
 function readMenu() {
   const source = fs.readFileSync(path.join(PUBLIC, 'js', 'app.js'), 'utf8');
   const start = source.indexOf('const ROLE_SCREENS = {');
@@ -15,7 +15,7 @@ function readMenu() {
   return new Function(`${source.slice(start, end + 3)}\nreturn ROLE_SCREENS;`)();
 }
 
-// The roles a page lets in: null when it lets everybody in, otherwise the list in its startPage([...]) call.
+// Roles a page allows: null means everyone, otherwise its startPage([...]) list.
 function rolesAllowedBy(page) {
   const html = fs.readFileSync(path.join(PUBLIC, page), 'utf8');
   const scripts = [...html.matchAll(/<script src="([^"]+)"/g)].map((m) => m[1]).filter((src) => src.startsWith('/js/') && src !== '/js/common.js'); // our own page scripts only

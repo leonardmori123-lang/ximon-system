@@ -1,5 +1,4 @@
-// The Document Trail on the RF page: the PRs of an RF, and the POs found through those PRs.
-// PR and PO rows are inserted straight into the database, because the Purchasing screens are not built yet.
+// Document Trail: an RF's PRs and their POs; rows are inserted directly because the screens are not built yet.
 const test = require('node:test');
 const assert = require('node:assert');
 const bcrypt = require('bcryptjs');
@@ -14,7 +13,6 @@ test.after(stop);
 
 const json = async (res, status) => { assert.strictEqual(res.status, status, await res.clone().text()); return res.json(); };
 
-// The foreman files a new RF and we get its id back.
 async function fileRf() {
   const foreman = await loginAs('foreman1');
   const { id } = await json(await call('POST', '/api/requisitions', foreman, rfBody([['HDPE-002', 1]])), 201);
@@ -33,8 +31,7 @@ function addPr(requisitionId, prNumber, status = 'pending') {
   ).lastId;
 }
 
-// Every test PO has money on it (subtotal 500000 + shipping 12345 = total 512345 centavos),
-// so we can check that the money never reaches the page.
+// Test POs carry 500000 + 12345 = 512345 centavos, so tests can check money stays off the page.
 function addPo(purchaseRequisitionId, poNumber, status = 'open') {
   return db.run(
     `INSERT INTO PurchaseOrder (PoNumber, PurchaseRequisitionId, SupplierId, ProjectId, Status, CreatedBy,
@@ -77,8 +74,7 @@ test('a PO shows up through its PR, and only through its PR', async () => {
 
 test('an RF with several PRs and POs shows all of them, in the order they were made', async () => {
   const id = await fileRf();
-  // One PO per PR. The POs are made in a different order from the PRs, so the order of the POs is
-  // really the order they were made, not the order of their PRs.
+  // POs are made in a different order from PRs, so PO order follows when they were made.
   const firstPr = addPr(id, 'PR-TEST-0004', 'approved');
   addPr(id, 'PR-TEST-0005', 'on_hold'); // no PO yet
   const thirdPr = addPr(id, 'PR-TEST-0010', 'approved');

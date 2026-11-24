@@ -1,5 +1,4 @@
-// Delivery into stock: receiveStock puts units on the shelf, allocateToRequisition sets them aside for the RF.
-// Real database, real SQL. The purchasing handoff is the empty stub, so shortages simply stay on the RF.
+// Delivery into stock: receiveStock shelves units; allocateToRequisition sets them aside for the RF (handoff is a stub).
 const test = require('node:test');
 const assert = require('node:assert');
 const { db, user, item, itemId, rfBody } = require('./helpers');
@@ -148,7 +147,7 @@ test('items that are not on the RF, RFs that are not approved, and unknown RFs g
 });
 
 test('stock that someone else has reserved is never handed out', () => {
-  // HDPE-001 has 9 on hand after the tests above: the first RF reserves it all, the second is short.
+  // Earlier tests leave 9 on hand: the first RF reserves it all.
   const free = item('HDPE-001').OnHand - item('HDPE-001').Reserved;
   approved([['HDPE-001', free]]);
   const second = approved([['HDPE-001', 2]]);

@@ -38,7 +38,7 @@ test('file, return, revise, return again, cancel: the foreman can revise only on
   rf = await json(await call('GET', `/api/requisitions/${id}`, owner), 200);
   assert.strictEqual(rf.Status, 'cancelled');
   assert.deepStrictEqual(rf.history.map((h) => h.ToStatus), ['pending', 'returned', 'pending', 'returned', 'cancelled']);
-  await json(await call('POST', `/api/requisitions/${id}/cancel`, foreman, {}), 409); // already cancelled
+  await json(await call('POST', `/api/requisitions/${id}/cancel`, foreman, {}), 409);
 });
 
 test('approve with a shortage, release, confirm: items, lines and statuses line up', async () => {

@@ -13,7 +13,7 @@ const json = async (res, status) => { assert.strictEqual(res.status, status, awa
 const projectCount = () => db.get('SELECT COUNT(*) AS n FROM Project').n;
 const rowOf = (code) => db.get('SELECT * FROM Project WHERE Code = @code', { code });
 const listed = async (owner, code) => (await json(await call('GET', '/api/projects/all', owner), 200)).find((p) => p.Code === code);
-// Two sums in whole centavos: a PO with no PR is enough to take money out of a project's budget.
+// A PO with no PR still counts against the budget, in whole centavos.
 let poNumbers = 0;
 const addPo = (projectId, totalCentavos) => db.run(
   `INSERT INTO PurchaseOrder (PoNumber, SupplierId, ProjectId, SubtotalCentavos, TotalCentavos, CreatedBy)
@@ -81,7 +81,7 @@ test('adding a project: it is saved clean, listed with its budget, and a repeate
   assert.ok(made.id > 0);
   assert.deepStrictEqual({ ...rowOf('PIPE-WORKS') }, { ProjectId: made.id, Code: 'PIPE-WORKS', Name: 'Pipe works, Block 4', MaterialBudgetCentavos: 1250000, Status: 'active' });
 
-  // No budget given: saved as 0, and the list says nothing is left to count (null), not a number.
+  // No budget: saved as 0, and Left is null, not a number.
   await json(await call('POST', '/api/projects', owner, { code: 'NO-BUDGET', name: 'No budget yet' }), 201);
   assert.strictEqual(rowOf('NO-BUDGET').MaterialBudgetCentavos, 0);
 
@@ -186,7 +186,7 @@ test('deleting a project: an unused one is removed for good; one that any docume
     assert.ok(rowOf(code), `${code} is still there`);
   };
 
-  // Never used: gone from the table, the pick list and the database; the code is free again.
+  // Unused: gone from the table, pick list and database; the code can be reused.
   const unused = await add('DEL-UNUSED');
   assert.deepStrictEqual(await json(await remove(unused), 200), { id: unused });
   assert.strictEqual(rowOf('DEL-UNUSED'), undefined);
