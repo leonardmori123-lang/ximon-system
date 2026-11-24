@@ -1,17 +1,29 @@
-// Purchasing module: suppliers, their prices, the purchase requisitions (PR) made from RF shortages,
-// and the purchase orders (PO) made from approved PRs.
-// The PR itself is created in handoff.js, inside the owner's approval of the RF.
+// Purchasing management: suppliers, pricing, purchase requisitions, and purchase orders.
 const db = require('../db');
 const { HttpError } = require('./errors');
 const { addDocHistory, getDocHistory } = require('./history');
 const { nextNumber } = require('./numbering');
 const { notifyUser, notifyRole } = require('./notifications');
 const {
-  PR_STATUSES, PO_STATUSES, PRICEABLE_STATUSES, DECISIONS, validateSupplierInput, checkUnitPrice, validatePriceLines, lineTotal, prTotal,
-  budgetCheck, checkReason, checkOwnerNote, formatPesos, MAX_REASON_LENGTH, ownerDecisions, validatePoInput, defaultDeliveryDate, poTotals,
+  PR_STATUSES,
+  PO_STATUSES,
+  PRICEABLE_STATUSES,
+  DECISIONS,
+  validateSupplierInput,
+  checkUnitPrice,
+  validatePriceLines,
+  lineTotal,
+  prTotal,
+  budgetCheck,
+  checkReason,
+  checkOwnerNote,
+  formatPesos,
+  MAX_REASON_LENGTH,
+  ownerDecisions,
+  validatePoInput,
+  defaultDeliveryDate,
+  poTotals,
 } = require('./purchasingRules');
-
-// ---------- Suppliers ----------
 
 function listSuppliers() {
   return db.all(
@@ -22,14 +34,16 @@ function listSuppliers() {
   );
 }
 
-// One supplier with a price row for every active item (the price is null when none is saved yet).
+// Returns supplier details and price records for all active items.
 function getSupplier(id) {
   const supplier = db.get(
     `SELECT SupplierId, Name, ContactPerson, Phone, Email, Address, PaymentTerms, LeadTimeDays, IsActive
      FROM Supplier WHERE SupplierId = @id`,
     { id }
   );
-  if (!supplier) throw new HttpError(404, 'Supplier not found.');
+  if (!supplier) {
+    throw new HttpError(404, 'Supplier not found.');
+  }
   supplier.prices = db.all(
     `SELECT i.ItemId, i.Code, i.Description, i.Unit, sp.UnitPriceCentavos
      FROM Item i LEFT JOIN SupplierPrice sp ON sp.ItemId = i.ItemId AND sp.SupplierId = @id
@@ -40,13 +54,15 @@ function getSupplier(id) {
   return supplier;
 }
 
-// The name must be new, ignoring capital letters (the table only blocks an exact copy).
+// Checks that a supplier name is not already taken, case-insensitively.
 function assertNameFree(name, exceptId) {
   const taken = db.get(
     'SELECT 1 AS ok FROM Supplier WHERE lower(Name) = lower(@name) AND SupplierId <> @exceptId',
     { name, exceptId: exceptId || 0 }
   );
-  if (taken) throw new HttpError(409, 'A supplier with that name already exists.');
+  if (taken) {
+    throw new HttpError(409, 'A supplier with that name already exists.');
+  }
 }
 
 function createSupplier(body) {
@@ -57,20 +73,29 @@ function createSupplier(body) {
       `INSERT INTO Supplier (Name, ContactPerson, Phone, Email, Address, PaymentTerms, LeadTimeDays)
        VALUES (@name, @contactPerson, @phone, @email, @address, @paymentTerms, @leadTimeDays)`,
       {
-        name: s.name, contactPerson: s.contactPerson, phone: s.phone, email: s.email,
-        address: s.address, paymentTerms: s.paymentTerms, leadTimeDays: s.leadTimeDays,
+        name: s.name,
+        contactPerson: s.contactPerson,
+        phone: s.phone,
+        email: s.email,
+        address: s.address,
+        paymentTerms: s.paymentTerms,
+        leadTimeDays: s.leadTimeDays,
       }
     );
     return { id: lastId };
   } catch (err) {
-    if (db.isUniqueError(err)) throw new HttpError(409, 'A supplier with that name already exists.');
+    if (db.isUniqueError(err)) {
+      throw new HttpError(409, 'A supplier with that name already exists.');
+    }
     throw err;
   }
 }
 
 function updateSupplier(id, body) {
   const s = validateSupplierInput(body, { creating: false });
-  if (!db.get('SELECT 1 AS ok FROM Supplier WHERE SupplierId = @id', { id })) throw new HttpError(404, 'Supplier not found.');
+  if (!db.get('SELECT 1 AS ok FROM Supplier WHERE SupplierId = @id', { id })) {
+    throw new HttpError(404, 'Supplier not found.');
+  }
   assertNameFree(s.name, id);
   try {
     db.run(
@@ -81,16 +106,21 @@ function updateSupplier(id, body) {
     );
     return { id };
   } catch (err) {
-    if (db.isUniqueError(err)) throw new HttpError(409, 'A supplier with that name already exists.');
+    if (db.isUniqueError(err)) {
+      throw new HttpError(409, 'A supplier with that name already exists.');
+    }
     throw err;
   }
 }
 
-// Saves or replaces the price of one item from one supplier.
 function saveSupplierPrice(supplierId, itemId, unitPriceCentavos) {
   const price = checkUnitPrice(unitPriceCentavos);
-  if (!db.get('SELECT 1 AS ok FROM Supplier WHERE SupplierId = @supplierId', { supplierId })) throw new HttpError(404, 'Supplier not found.');
-  if (!db.get('SELECT 1 AS ok FROM Item WHERE ItemId = @itemId', { itemId })) throw new HttpError(404, 'Item not found.');
+  if (!db.get('SELECT 1 AS ok FROM Supplier WHERE SupplierId = @supplierId', { supplierId })) {
+    throw new HttpError(404, 'Supplier not found.');
+  }
+  if (!db.get('SELECT 1 AS ok FROM Item WHERE ItemId = @itemId', { itemId })) {
+    throw new HttpError(404, 'Item not found.');
+  }
   db.run(
     `INSERT INTO SupplierPrice (SupplierId, ItemId, UnitPriceCentavos) VALUES (@supplierId, @itemId, @price)
      ON CONFLICT (SupplierId, ItemId) DO UPDATE SET UnitPriceCentavos = @price, UpdatedAt = datetime('now','localtime')`,
@@ -99,16 +129,13 @@ function saveSupplierPrice(supplierId, itemId, unitPriceCentavos) {
   return { supplierId, itemId, unitPriceCentavos: price };
 }
 
-// ---------- Purchase requisitions ----------
+function prLink(id) {
+  return `/pr.html?id=${id}`;
+}
 
-const prLink = (id) => `/pr.html?id=${id}`;
-
-// A PR the owner still has to decide on. Only these get a live budget check.
 const OPEN_FOR_DECISION = ['pending', 'on_hold'];
 
-// What a project's budget is already promised to: every PO made for the project, delivered or not, and
-// every approved PR that has no PO yet. A PR still waiting for the owner is not counted, so the PR being
-// checked never counts itself.
+// Sums all PO totals and approved PR lines for a project to calculate committed budget.
 function committedCentavos(projectId) {
   const pos = db.get('SELECT COALESCE(SUM(TotalCentavos), 0) AS total FROM PurchaseOrder WHERE ProjectId = @projectId', { projectId }).total;
   const waiting = db.all(
@@ -118,18 +145,24 @@ function committedCentavos(projectId) {
        AND NOT EXISTS (SELECT 1 FROM PurchaseOrder po WHERE po.PurchaseRequisitionId = pr.PurchaseRequisitionId)`,
     { projectId }
   );
-  return pos + waiting.reduce((sum, l) => sum + (l.UnitPriceCentavos == null ? 0 : lineTotal(l.ShortQty, l.UnitPriceCentavos)), 0);
+  let waitingTotal = 0;
+  for (const line of waiting) {
+    if (line.UnitPriceCentavos != null) {
+      waitingTotal += lineTotal(line.ShortQty, line.UnitPriceCentavos);
+    }
+  }
+  return pos + waitingTotal;
 }
 
-// The budget check for a PR of this project, with its total as the PR stands now.
 function projectBudgetCheck(projectId, prTotalCentavos) {
   const project = db.get('SELECT MaterialBudgetCentavos AS budget FROM Project WHERE ProjectId = @projectId', { projectId });
   return budgetCheck(project.budget, committedCentavos(projectId), prTotalCentavos);
 }
 
-// The RF number comes from a join, so the purchaser never needs the RF routes (those are closed to the purchaser).
 function listPrs(status) {
-  if (status && !PR_STATUSES.includes(status)) throw new HttpError(400, 'Unknown status.');
+  if (status && !PR_STATUSES.includes(status)) {
+    throw new HttpError(400, 'Unknown status.');
+  }
   const rows = db.all(
     `SELECT pr.PurchaseRequisitionId, pr.PrNumber, pr.Status, pr.OverBudget, r.RfNumber, r.Status AS RfStatus, pr.ProjectId,
             p.Code AS ProjectCode, p.Name AS ProjectName, substr(pr.CreatedAt, 1, 16) AS CreatedAt,
@@ -146,13 +179,18 @@ function listPrs(status) {
      GROUP BY pr.PurchaseRequisitionId ORDER BY pr.PurchaseRequisitionId DESC`,
     status ? { status } : {}
   );
-  // OverBudget: live for a PR still waiting for the owner, as saved for one he already decided.
-  return rows.map((row) => ({
-    ...row,
-    OverBudget: OPEN_FOR_DECISION.includes(row.Status) && row.TotalCentavos != null
-      ? projectBudgetCheck(row.ProjectId, row.TotalCentavos).overBudget
-      : row.OverBudget === 1,
-  }));
+  const result = [];
+  for (const row of rows) {
+    let overBudget = row.OverBudget === 1;
+    if (OPEN_FOR_DECISION.includes(row.Status) && row.TotalCentavos != null) {
+      overBudget = projectBudgetCheck(row.ProjectId, row.TotalCentavos).overBudget;
+    }
+    result.push({
+      ...row,
+      OverBudget: overBudget,
+    });
+  }
+  return result;
 }
 
 function getPr(user, id) {
@@ -168,7 +206,9 @@ function getPr(user, id) {
      WHERE pr.PurchaseRequisitionId = @id`,
     { id }
   );
-  if (!pr) throw new HttpError(404, 'Purchase requisition not found.');
+  if (!pr) {
+    throw new HttpError(404, 'Purchase requisition not found.');
+  }
 
   const lines = db.all(
     `SELECT l.PrLineId, l.ItemId, i.Code, i.Description, i.Unit, l.ShortQty,
@@ -183,20 +223,14 @@ function getPr(user, id) {
     line.LineTotalCentavos = line.UnitPriceCentavos == null ? null : lineTotal(line.ShortQty, line.UnitPriceCentavos);
   }
 
-  // One supplier for the whole PR: the save below sets the same supplier on every line.
   const supplierLine = lines.find((l) => l.SupplierId != null);
-  const total = prTotal(lines); // null while any line has no price
-
-  // The budget check, while the owner still has to decide and every line is priced.
+  const total = prTotal(lines);
   const budget = OPEN_FOR_DECISION.includes(pr.Status) && total !== null ? projectBudgetCheck(pr.ProjectId, total) : null;
 
-  // The PO made from this PR, if any. Both roles may see the link to it.
   const po = db.get('SELECT PurchaseOrderId, PoNumber, Status FROM PurchaseOrder WHERE PurchaseRequisitionId = @id', { id });
-  // The purchaser can make the PO when the PR is approved, fully priced and has none yet.
-  const canMakePo = user.role === 'purchaser' && pr.Status === 'approved' && !po && total !== null && !!supplierLine;
+  const canMakePo = user.role === 'purchaser' && pr.Status === 'approved' && !po && total !== null && Boolean(supplierLine);
   let poDefaults = null;
   if (canMakePo) {
-    // What the PO form starts with. The same fallbacks createPo uses for a box left empty.
     const supplier = db.get('SELECT PaymentTerms, LeadTimeDays FROM Supplier WHERE SupplierId = @id', { id: supplierLine.SupplierId });
     poDefaults = {
       discountPercent: 0,
@@ -218,22 +252,22 @@ function getPr(user, id) {
     canMakePo,
     poDefaults,
     canPrice: user.role === 'purchaser' && PRICEABLE_STATUSES.includes(pr.Status),
-    // The buttons the owner may press now: some of 'approve', 'hold', 'cancel'. Nobody else gets any.
     decisions: user.role === 'owner' ? ownerDecisions(pr.Status, total !== null) : [],
   };
 }
 
-// The purchaser picks one supplier for the whole PR and a unit price for each line.
-// body: { supplierId, lines: [{ prLineId, unitPriceCentavos }] }
-// A pending PR stays pending. A held PR goes back to pending, so the owner decides again.
 function savePrices(user, id, body) {
   const input = body || {};
   const supplierId = Number(input.supplierId);
-  if (!Number.isInteger(supplierId) || supplierId <= 0) throw new HttpError(400, 'Choose a supplier.');
+  if (!Number.isInteger(supplierId) || supplierId <= 0) {
+    throw new HttpError(400, 'Choose a supplier.');
+  }
 
   return db.transaction(() => {
     const pr = db.get('SELECT PrNumber, Status, ProjectId FROM PurchaseRequisition WHERE PurchaseRequisitionId = @id', { id });
-    if (!pr) throw new HttpError(404, 'Purchase requisition not found.');
+    if (!pr) {
+      throw new HttpError(404, 'Purchase requisition not found.');
+    }
     if (!PRICEABLE_STATUSES.includes(pr.Status)) {
       throw new HttpError(409, `This purchase requisition is ${pr.Status.replace('_', ' ')}, so its prices cannot be changed.`);
     }
@@ -251,7 +285,6 @@ function savePrices(user, id, body) {
       );
     }
 
-    // Resubmitting a held PR clears the hold, so the owner sees a clean pending PR.
     const wasHeld = pr.Status === 'on_hold';
     if (wasHeld) {
       const { changes } = db.run(
@@ -260,7 +293,9 @@ function savePrices(user, id, body) {
          WHERE PurchaseRequisitionId = @id AND Status = 'on_hold'`,
         { id }
       );
-      if (changes === 0) throw new HttpError(409, 'This purchase requisition changed. Open it again.');
+      if (changes === 0) {
+        throw new HttpError(409, 'This purchase requisition changed. Open it again.');
+      }
       addDocHistory('PR', id, 'on_hold', 'pending', user.id, 'Revised and resubmitted');
     } else {
       db.run(`UPDATE PurchaseRequisition SET UpdatedAt = datetime('now','localtime') WHERE PurchaseRequisitionId = @id`, { id });
@@ -268,24 +303,22 @@ function savePrices(user, id, body) {
 
     const saved = db.all('SELECT ShortQty, UnitPriceCentavos FROM PRLine WHERE PurchaseRequisitionId = @id', { id });
     const overBudget = projectBudgetCheck(pr.ProjectId, prTotal(saved)).overBudget;
-    notifyRole('owner', (wasHeld
-      ? `${pr.PrNumber} was revised and needs your decision again.`
-      : `${pr.PrNumber} has a supplier and prices and needs your approval.`) + (overBudget ? ' It is over the project budget.' : ''), prLink(id));
+    notifyRole(
+      'owner',
+      (wasHeld
+        ? `${pr.PrNumber} was revised and needs your decision again.`
+        : `${pr.PrNumber} has a supplier and prices and needs your approval.`) + (overBudget ? ' It is over the project budget.' : ''),
+      prLink(id)
+    );
     return { id, status: 'pending' };
   });
 }
 
-// ---------- The owner's decision ----------
-
-// action is 'approve', 'hold' or 'cancel'. Hold and cancel need body.reason.
-// Approve and hold work on a pending PR, cancel on a pending or a held one. Approve also needs a
-// supplier and a price on every line. A held PR comes back through savePrices above.
-// The foreman who asked for the RF is told the result, without the reason and without any money.
 function decidePr(user, id, action, body) {
   const rule = DECISIONS[action];
-  const reason = rule.needsReason ? checkReason((body || {}).reason, action) : null;
-  // The owner's note belongs to an approval. It is required when the PR is over the project budget.
-  const note = action === 'approve' ? checkOwnerNote((body || {}).note) : null;
+  const bodyData = body || {};
+  const reason = rule.needsReason ? checkReason(bodyData.reason, action) : null;
+  const note = action === 'approve' ? checkOwnerNote(bodyData.note) : null;
 
   return db.transaction(() => {
     const pr = db.get(
@@ -294,7 +327,9 @@ function decidePr(user, id, action, body) {
        WHERE pr.PurchaseRequisitionId = @id`,
       { id }
     );
-    if (!pr) throw new HttpError(404, 'Purchase requisition not found.');
+    if (!pr) {
+      throw new HttpError(404, 'Purchase requisition not found.');
+    }
     if (!rule.from.includes(pr.Status)) {
       throw new HttpError(409, `This purchase requisition is ${pr.Status.replace('_', ' ')}, so it cannot be ${rule.done}.`);
     }
@@ -307,7 +342,6 @@ function decidePr(user, id, action, body) {
       if (count.lines === 0 || count.priced < count.lines) {
         throw new HttpError(409, 'The purchaser has not saved a supplier and a price for every line yet, so it cannot be approved.');
       }
-      // Over budget is judged now, as the PR is approved, and saved with the PR.
       const lines = db.all('SELECT ShortQty, UnitPriceCentavos FROM PRLine WHERE PurchaseRequisitionId = @id', { id });
       const budget = projectBudgetCheck(pr.ProjectId, prTotal(lines));
       overBudget = budget.overBudget;
@@ -323,11 +357,22 @@ function decidePr(user, id, action, body) {
        WHERE PurchaseRequisitionId = @id AND Status = @from`,
       { to: rule.to, reason, overBudget: overBudget ? 1 : 0, note, userId: user.id, id, from: pr.Status }
     );
-    if (changes === 0) throw new HttpError(409, 'This purchase requisition changed. Open it again.');
+    if (changes === 0) {
+      throw new HttpError(409, 'This purchase requisition changed. Open it again.');
+    }
     addDocHistory('PR', id, pr.Status, rule.to, user.id, reason || note);
 
-    // The purchasers hear the reason. The requestor hears only the outcome, on the RF page (the foreman cannot open the PR page).
-    const outcome = { approve: overBudget ? 'was approved over the project budget.' : 'was approved.', hold: `was put on hold: ${reason}`, cancel: `was cancelled: ${reason}` }[action];
+    let outcome = 'was approved.';
+    if (action === 'approve') {
+      if (overBudget) {
+        outcome = 'was approved over the project budget.';
+      }
+    } else if (action === 'hold') {
+      outcome = `was put on hold: ${reason}`;
+    } else if (action === 'cancel') {
+      outcome = `was cancelled: ${reason}`;
+    }
+
     notifyRole('purchaser', `${pr.PrNumber} ${outcome}`, prLink(id));
     if (pr.RequestedBy) {
       notifyUser(pr.RequestedBy, `${pr.PrNumber} for ${pr.RfNumber} was ${rule.done}.`, `/requisition.html?id=${pr.RequisitionId}`);
@@ -336,13 +381,6 @@ function decidePr(user, id, action, body) {
   });
 }
 
-// ---------- The purchase order ----------
-
-// The purchaser turns an approved PR into a numbered PO. One PO per PR.
-// body: { discountPercent, deliveryPoint, expectedDeliveryDate, paymentTerms }, all optional:
-//   discount 0; delivery point the project; expected date today plus the supplier's lead time; terms the supplier's.
-// The PO copies the supplier, the quantities and the prices from the PR. PurchaseRequisitionId is always set,
-// because the RF's Document Trail finds the PO through it.
 function createPo(user, prId, body) {
   const input = validatePoInput(body);
 
@@ -353,12 +391,16 @@ function createPo(user, prId, body) {
        WHERE pr.PurchaseRequisitionId = @prId`,
       { prId }
     );
-    if (!pr) throw new HttpError(404, 'Purchase requisition not found.');
+    if (!pr) {
+      throw new HttpError(404, 'Purchase requisition not found.');
+    }
     if (pr.Status !== 'approved') {
       throw new HttpError(409, `This purchase requisition is ${pr.Status.replace('_', ' ')}, so it cannot become a purchase order. Only an approved one can.`);
     }
     const existing = db.get('SELECT PoNumber FROM PurchaseOrder WHERE PurchaseRequisitionId = @prId', { prId });
-    if (existing) throw new HttpError(409, `This purchase requisition already has a purchase order (${existing.PoNumber}).`);
+    if (existing) {
+      throw new HttpError(409, `This purchase requisition already has a purchase order (${existing.PoNumber}).`);
+    }
 
     const lines = db.all(
       `SELECT PrLineId, ItemId, ShortQty, SupplierId, UnitPriceCentavos
@@ -381,37 +423,45 @@ function createPo(user, prId, body) {
        VALUES (@poNumber, @prId, @supplierId, @projectId, @paymentTerms, @expectedDate,
                @deliveryPoint, @discountPercent, @subtotal, @discount, @total, @userId)`,
       {
-        poNumber, prId, supplierId: supplier.SupplierId, projectId: pr.ProjectId,
+        poNumber,
+        prId,
+        supplierId: supplier.SupplierId,
+        projectId: pr.ProjectId,
         paymentTerms: input.paymentTerms || supplier.PaymentTerms,
         expectedDate: input.expectedDeliveryDate || defaultDeliveryDate(supplier.LeadTimeDays),
         deliveryPoint: input.deliveryPoint || `${pr.ProjectCode}, ${pr.ProjectName}`,
         discountPercent: input.discountPercent,
-        subtotal: subtotalCentavos, discount: discountCentavos, total: totalCentavos, userId: user.id,
+        subtotal: subtotalCentavos,
+        discount: discountCentavos,
+        total: totalCentavos,
+        userId: user.id,
       }
     );
-    lines.forEach((line, i) => {
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
       db.run(
         `INSERT INTO POLine (PurchaseOrderId, PrLineId, ItemId, Quantity, UnitPriceCentavos, LineTotalCentavos)
          VALUES (@poId, @prLineId, @itemId, @quantity, @price, @lineTotal)`,
         { poId, prLineId: line.PrLineId, itemId: line.ItemId, quantity: line.ShortQty, price: line.UnitPriceCentavos, lineTotal: lineTotals[i] }
       );
-    });
+    }
     addDocHistory('PO', poId, null, 'open', user.id, null);
     return { id: poId, poNumber, status: 'open', subtotalCentavos, discountCentavos, totalCentavos };
   });
 }
 
-// The delivery verifier checks a delivery against a PO: supplier, items, quantities, dates. No prices, discounts
-// or totals are sent to this role, the same way the foreman never gets money.
-const isMoneyField = (name) => /Centavos$/.test(name) || name === 'DiscountPercent';
+function isMoneyField(name) {
+  return /Centavos$/.test(name) || name === 'DiscountPercent';
+}
+
 function withoutMoney(row) {
   return Object.fromEntries(Object.entries(row).filter(([name]) => !isMoneyField(name)));
 }
 
-// All purchase orders, newest first. status is optional: open, partly_delivered or closed.
-// The user decides whether money is included (the verifier does not get it).
 function listPos(user, status) {
-  if (status && !PO_STATUSES.includes(status)) throw new HttpError(400, 'Unknown status.');
+  if (status && !PO_STATUSES.includes(status)) {
+    throw new HttpError(400, 'Unknown status.');
+  }
   const rows = db.all(
     `SELECT po.PurchaseOrderId, po.PoNumber, po.Status, s.Name AS SupplierName, p.Code AS ProjectCode,
             po.PurchaseRequisitionId, pr.PrNumber, po.ExpectedDeliveryDate, po.TotalCentavos, substr(po.CreatedAt, 1, 16) AS CreatedAt
@@ -423,11 +473,12 @@ function listPos(user, status) {
      ORDER BY po.PurchaseOrderId DESC`,
     status ? { status } : {}
   );
-  return user.role === 'verifier' ? rows.map(withoutMoney) : rows;
+  if (user.role === 'verifier') {
+    return rows.map(withoutMoney);
+  }
+  return rows;
 }
 
-// One purchase order with its supplier, lines, totals and history. The print page uses the same data.
-// The verifier gets it without any money.
 function getPo(user, id) {
   const po = db.get(
     `SELECT po.PurchaseOrderId, po.PoNumber, po.Status, po.PurchaseRequisitionId, pr.PrNumber,
@@ -445,7 +496,9 @@ function getPo(user, id) {
      WHERE po.PurchaseOrderId = @id`,
     { id }
   );
-  if (!po) throw new HttpError(404, 'Purchase order not found.');
+  if (!po) {
+    throw new HttpError(404, 'Purchase order not found.');
+  }
 
   const lines = db.all(
     `SELECT l.PoLineId, l.ItemId, i.Code, i.Description, i.Unit, l.Quantity, l.UnitPriceCentavos,
@@ -455,11 +508,24 @@ function getPo(user, id) {
     { id }
   );
   const whole = { ...po, lines, history: getDocHistory('PO', id) };
-  if (user.role !== 'verifier') return whole;
+  if (user.role !== 'verifier') {
+    return whole;
+  }
   return { ...withoutMoney(po), lines: lines.map(withoutMoney), history: whole.history };
 }
 
 module.exports = {
-  listSuppliers, getSupplier, createSupplier, updateSupplier, saveSupplierPrice,
-  listPrs, getPr, savePrices, decidePr, createPo, listPos, getPo, committedCentavos,
+  listSuppliers,
+  getSupplier,
+  createSupplier,
+  updateSupplier,
+  saveSupplierPrice,
+  listPrs,
+  getPr,
+  savePrices,
+  decidePr,
+  createPo,
+  listPos,
+  getPo,
+  committedCentavos,
 };

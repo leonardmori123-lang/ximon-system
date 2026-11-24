@@ -1,37 +1,39 @@
-// Purchasing rules that need no database, so they are easy to test.
-// Money is whole centavos: PHP 532.66 is 53266.
+// Validation and calculation rules for purchasing documents and supplier records.
 const { HttpError } = require('./errors');
 const { todayString } = require('./rfRules');
 
 const PR_STATUSES = ['pending', 'approved', 'on_hold', 'cancelled'];
 const PO_STATUSES = ['open', 'partly_delivered', 'closed'];
-// The purchaser can change the supplier and prices only while the owner has not approved.
 const PRICEABLE_STATUSES = ['pending', 'on_hold'];
-const MAX_PRICE_CENTAVOS = 1000000000; // PHP 10,000,000 for one unit
-const MAX_REASON_LENGTH = 300; // same limit as the reason for returning an RF
+const MAX_PRICE_CENTAVOS = 1000000000;
+const MAX_REASON_LENGTH = 300;
 
-// The owner's three decisions: where each may start, where it ends, and whether it needs a reason.
-// "done" is the word used in messages ("it cannot be approved").
+// Workflow states for owner decisions on purchase requisitions.
 const DECISIONS = {
   approve: { from: ['pending'], to: 'approved', needsReason: false, done: 'approved' },
   hold: { from: ['pending'], to: 'on_hold', needsReason: true, done: 'put on hold' },
   cancel: { from: ['pending', 'on_hold'], to: 'cancelled', needsReason: true, done: 'cancelled' },
 };
 
-// Turns an empty text into null, and refuses text longer than the limit.
 function optionalText(value, max, label) {
-  const text = String(value == null ? '' : value).trim();
-  if (text.length > max) throw new HttpError(400, `${label} can be up to ${max} characters.`);
+  const raw = value == null ? '' : value;
+  const text = String(raw).trim();
+  if (text.length > max) {
+    throw new HttpError(400, `${label} can be up to ${max} characters.`);
+  }
   return text || null;
 }
 
-// Checks the supplier form.
-function validateSupplierInput(body, { creating }) {
+function validateSupplierInput(body, options = {}) {
+  const creating = Boolean(options.creating);
   const input = body || {};
   const supplier = {};
 
-  supplier.name = String(input.name == null ? '' : input.name).trim();
-  if (!supplier.name || supplier.name.length > 100) throw new HttpError(400, 'Enter the supplier name, up to 100 characters.');
+  const rawName = input.name == null ? '' : input.name;
+  supplier.name = String(rawName).trim();
+  if (!supplier.name || supplier.name.length > 100) {
+    throw new HttpError(400, 'Enter the supplier name, up to 100 characters.');
+  }
 
   supplier.contactPerson = optionalText(input.contactPerson, 100, 'Contact person');
   supplier.phone = optionalText(input.phone, 40, 'Phone');
@@ -42,16 +44,23 @@ function validateSupplierInput(body, { creating }) {
   supplier.address = optionalText(input.address, 200, 'Address');
   supplier.paymentTerms = optionalText(input.paymentTerms, 100, 'Payment terms');
 
-  supplier.leadTimeDays = Number(input.leadTimeDays === undefined || input.leadTimeDays === '' ? 0 : input.leadTimeDays);
+  let leadTimeDays = 0;
+  if (input.leadTimeDays !== undefined && input.leadTimeDays !== '') {
+    leadTimeDays = Number(input.leadTimeDays);
+  }
+  supplier.leadTimeDays = leadTimeDays;
   if (!Number.isInteger(supplier.leadTimeDays) || supplier.leadTimeDays < 0 || supplier.leadTimeDays > 1000) {
     throw new HttpError(400, 'Lead time must be a whole number of days, 0 to 1000.');
   }
 
-  supplier.isActive = creating ? true : input.isActive !== false;
+  if (creating) {
+    supplier.isActive = true;
+  } else {
+    supplier.isActive = input.isActive !== false;
+  }
   return supplier;
 }
 
-// A unit price in whole centavos, above zero.
 function checkUnitPrice(value) {
   if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0 || value > MAX_PRICE_CENTAVOS) {
     throw new HttpError(400, 'Enter a unit price above zero, up to PHP 10,000,000, with at most 2 decimals.');
@@ -59,50 +68,73 @@ function checkUnitPrice(value) {
   return value;
 }
 
-// The prices sent for a purchase requisition must cover every one of its lines, once each.
-// Returns [{ prLineId, unitPriceCentavos }].
 function validatePriceLines(lines, prLineIds) {
-  if (!Array.isArray(lines) || lines.length === 0) throw new HttpError(400, 'Enter a price for every line.');
+  if (!Array.isArray(lines) || lines.length === 0) {
+    throw new HttpError(400, 'Enter a price for every line.');
+  }
   const seen = new Set();
-  const checked = lines.map((line) => {
-    const prLineId = Number((line || {}).prLineId);
-    if (!prLineIds.includes(prLineId)) throw new HttpError(400, 'One of the lines does not belong to this purchase requisition.');
-    if (seen.has(prLineId)) throw new HttpError(400, 'A line was sent twice.');
+  const checked = [];
+  for (const line of lines) {
+    const lineData = line || {};
+    const prLineId = Number(lineData.prLineId);
+    if (!prLineIds.includes(prLineId)) {
+      throw new HttpError(400, 'One of the lines does not belong to this purchase requisition.');
+    }
+    if (seen.has(prLineId)) {
+      throw new HttpError(400, 'A line was sent twice.');
+    }
     seen.add(prLineId);
-    return { prLineId, unitPriceCentavos: checkUnitPrice(line.unitPriceCentavos) };
-  });
-  if (checked.length !== prLineIds.length) throw new HttpError(400, 'Enter a price for every line.');
+    checked.push({
+      prLineId,
+      unitPriceCentavos: checkUnitPrice(lineData.unitPriceCentavos),
+    });
+  }
+  if (checked.length !== prLineIds.length) {
+    throw new HttpError(400, 'Enter a price for every line.');
+  }
   return checked;
 }
 
-// Same rounding as the CHECK on POLine: whole centavos, half up.
+// Rounds line total to the nearest whole centavo.
 function lineTotal(quantity, unitPriceCentavos) {
   return Math.round(Number(quantity) * unitPriceCentavos);
 }
 
-// Total of a purchase requisition, or null while any line has no price yet.
 function prTotal(lines) {
-  if (lines.length === 0 || lines.some((l) => l.UnitPriceCentavos == null)) return null;
-  return lines.reduce((sum, l) => sum + lineTotal(l.ShortQty, l.UnitPriceCentavos), 0);
+  if (!Array.isArray(lines) || lines.length === 0) {
+    return null;
+  }
+  let sum = 0;
+  for (const line of lines) {
+    if (line.UnitPriceCentavos == null) {
+      return null;
+    }
+    sum += lineTotal(line.ShortQty, line.UnitPriceCentavos);
+  }
+  return sum;
 }
 
-// The budget check for one PR. budgetCentavos is the project's material budget (0 means none was set, so
-// nothing is checked). committedCentavos is what the budget is already promised to, without this PR.
-// The PR is over budget when committed + this PR goes above the budget.
 function budgetCheck(budgetCentavos, committedCentavos, prTotalCentavos) {
   const budgetSet = budgetCentavos > 0;
   const remainingCentavos = budgetCentavos - committedCentavos;
-  const overByCentavos = budgetSet && prTotalCentavos != null ? Math.max(0, prTotalCentavos - remainingCentavos) : 0;
+  let overByCentavos = 0;
+  if (budgetSet && prTotalCentavos != null) {
+    overByCentavos = Math.max(0, prTotalCentavos - remainingCentavos);
+  }
   return {
-    budgetSet, budgetCentavos, committedCentavos, remainingCentavos,
+    budgetSet,
+    budgetCentavos,
+    committedCentavos,
+    remainingCentavos,
     prTotalCentavos: prTotalCentavos == null ? null : prTotalCentavos,
-    overByCentavos, overBudget: overByCentavos > 0,
+    overByCentavos,
+    overBudget: overByCentavos > 0,
   };
 }
 
-// The reason for holding or cancelling: required, trimmed, up to 300 characters.
 function checkReason(value, action) {
-  const reason = String(value == null ? '' : value).trim();
+  const raw = value == null ? '' : value;
+  const reason = String(raw).trim();
   if (!reason || reason.length > MAX_REASON_LENGTH) {
     const what = action === 'hold' ? 'putting it on hold' : 'cancelling it';
     throw new HttpError(400, `Write the reason for ${what}, up to ${MAX_REASON_LENGTH} characters.`);
@@ -110,55 +142,62 @@ function checkReason(value, action) {
   return reason;
 }
 
-// The owner's note when approving: trimmed, up to 300 characters, empty means none.
-// Whether a note is required (over budget) is decided where the budget is known, in decidePr.
 function checkOwnerNote(value) {
   return optionalText(value, MAX_REASON_LENGTH, 'The note');
 }
 
-// Whole centavos as pesos for a message: 108369 becomes "1,083.69".
 function formatPesos(centavos) {
   return (centavos / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-// Which decisions the owner can take on a purchase requisition right now.
-// Approve needs a supplier and a price on every line (isPriced), so the screen can hide the button
-// and the route can refuse it.
 function ownerDecisions(status, isPriced) {
-  return Object.keys(DECISIONS).filter((action) => DECISIONS[action].from.includes(status) && (action !== 'approve' || isPriced));
+  const allowed = [];
+  for (const action of Object.keys(DECISIONS)) {
+    const rule = DECISIONS[action];
+    if (rule.from.includes(status)) {
+      if (action !== 'approve' || isPriced) {
+        allowed.push(action);
+      }
+    }
+  }
+  return allowed;
 }
 
-// ---------- The purchase order ----------
-
-// A real calendar date written as 2026-11-19 (2026-02-30 is not one).
 function isRealDate(text) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return false;
-  const [y, m, d] = text.split('-').map(Number);
-  const date = new Date(y, m - 1, d);
-  return date.getFullYear() === y && date.getMonth() === m - 1 && date.getDate() === d;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+    return false;
+  }
+  const parts = text.split('-').map(Number);
+  const year = parts[0];
+  const month = parts[1];
+  const day = parts[2];
+  const date = new Date(year, month - 1, day);
+  return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day;
 }
 
-// The date a supplier with this lead time can deliver, counted from today. Null when the lead time is
-// not set (0 or empty), so the purchaser types the date.
 function defaultDeliveryDate(leadTimeDays, today = todayString()) {
-  if (!leadTimeDays) return null;
-  const [y, m, d] = today.split('-').map(Number);
-  return todayString(new Date(y, m - 1, d + Number(leadTimeDays)));
+  if (!leadTimeDays) {
+    return null;
+  }
+  const parts = today.split('-').map(Number);
+  const date = new Date(parts[0], parts[1] - 1, parts[2] + Number(leadTimeDays));
+  return todayString(date);
 }
 
-// Checks what the purchaser types when making a PO. A box left empty comes back as null (or 0 for the
-// discount), and the service then fills it from the supplier or the project.
 function validatePoInput(body, today = todayString()) {
   const input = body || {};
 
   let discountPercent = 0;
   const raw = input.discountPercent;
-  if (raw !== undefined && raw !== null && String(raw).trim() !== '') discountPercent = typeof raw === 'number' ? raw : Number(String(raw).trim());
+  if (raw !== undefined && raw !== null && String(raw).trim() !== '') {
+    discountPercent = typeof raw === 'number' ? raw : Number(String(raw).trim());
+  }
   if (!Number.isFinite(discountPercent) || discountPercent < 0 || discountPercent > 100 || Math.round(discountPercent * 100) / 100 !== discountPercent) {
     throw new HttpError(400, 'Enter the discount as a percent from 0 to 100, with at most 2 decimals.');
   }
 
-  const expected = String(input.expectedDeliveryDate == null ? '' : input.expectedDeliveryDate).trim();
+  const rawExpected = input.expectedDeliveryDate == null ? '' : input.expectedDeliveryDate;
+  const expected = String(rawExpected).trim();
   if (expected && (!isRealDate(expected) || expected < today)) {
     throw new HttpError(400, 'Enter the expected delivery date as a real date, today or later.');
   }
@@ -171,22 +210,40 @@ function validatePoInput(body, today = todayString()) {
   };
 }
 
-// The discount in whole centavos, half up. The percent has at most 2 decimals, so it is turned into
-// hundredths of a percent first. That keeps the rounding exact (no 0.1 + 0.2 style drift).
+// Rounds discount to whole centavos using hundredths of a percent.
 function poDiscount(subtotalCentavos, discountPercent) {
   return Math.round((subtotalCentavos * Math.round(discountPercent * 100)) / 10000);
 }
 
-// Subtotal, discount and total of a PO from its line totals. The PO has no other discount and no
-// shipping yet (both stay 0), so total = subtotal - discount.
 function poTotals(lineTotals, discountPercent) {
-  const subtotalCentavos = lineTotals.reduce((sum, t) => sum + t, 0);
+  let subtotalCentavos = 0;
+  for (const amount of lineTotals) {
+    subtotalCentavos += amount;
+  }
   const discountCentavos = poDiscount(subtotalCentavos, discountPercent);
-  return { subtotalCentavos, discountCentavos, totalCentavos: subtotalCentavos - discountCentavos };
+  const totalCentavos = subtotalCentavos - discountCentavos;
+  return { subtotalCentavos, discountCentavos, totalCentavos };
 }
 
 module.exports = {
-  PR_STATUSES, PO_STATUSES, PRICEABLE_STATUSES, MAX_PRICE_CENTAVOS, MAX_REASON_LENGTH, DECISIONS,
-  validateSupplierInput, checkUnitPrice, validatePriceLines, lineTotal, prTotal, budgetCheck, checkReason, checkOwnerNote, formatPesos, ownerDecisions,
-  validatePoInput, defaultDeliveryDate, poDiscount, poTotals,
+  PR_STATUSES,
+  PO_STATUSES,
+  PRICEABLE_STATUSES,
+  MAX_PRICE_CENTAVOS,
+  MAX_REASON_LENGTH,
+  DECISIONS,
+  validateSupplierInput,
+  checkUnitPrice,
+  validatePriceLines,
+  lineTotal,
+  prTotal,
+  budgetCheck,
+  checkReason,
+  checkOwnerNote,
+  formatPesos,
+  ownerDecisions,
+  validatePoInput,
+  defaultDeliveryDate,
+  poDiscount,
+  poTotals,
 };
