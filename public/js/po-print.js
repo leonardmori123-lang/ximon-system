@@ -1,8 +1,11 @@
+// Printable purchase order document view.
 const sheet = document.getElementById('sheet');
 const errorBox = document.getElementById('error');
 const id = new URLSearchParams(location.search).get('id');
 
-const money = (centavos) => pesos(centavos);
+function money(centavos) {
+  return pesos(centavos);
+}
 
 function pair(label, value) {
   return [h('dt', null, label), h('dd', null, value || '-')];
@@ -11,9 +14,12 @@ function pair(label, value) {
 function render(po) {
   const supplierLines = [po.SupplierContact, po.SupplierAddress, po.SupplierPhone, po.SupplierEmail].filter(Boolean);
 
-  // The totals sit under the lines table, like the client's PO. A zero shows as a dash.
-  const totalRow = (label, value, extra = '') => h('tr', { class: extra },
-    h('td', { colSpan: 6, class: 'label' }, label), h('td', { class: 'num' }, value));
+  function totalRow(label, value, extra = '') {
+    return h('tr', { class: extra },
+      h('td', { colSpan: 6, class: 'label' }, label),
+      h('td', { class: 'num' }, value)
+    );
+  }
 
   return h('div', { class: 'sheet' },
     h('div', { class: 'head' },
@@ -59,7 +65,10 @@ function render(po) {
 async function start() {
   await startPage(['purchaser', 'owner']);
   document.getElementById('print').addEventListener('click', () => window.print());
-  if (!id) { showError(errorBox, 'No purchase order chosen.'); return; }
+  if (!id) {
+    showError(errorBox, 'No purchase order chosen.');
+    return;
+  }
   document.getElementById('back').href = `/po.html?id=${encodeURIComponent(id)}`;
   try {
     const po = await api(`/api/purchasing/pos/${encodeURIComponent(id)}`);

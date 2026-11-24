@@ -1,4 +1,4 @@
-// Shared by every page after login: API calls, the top bar, small helpers.
+// Shared helper functions, API client, and layout components.
 const ROLE_NAMES = {
   owner: 'Owner or manager',
   foreman: 'Foreman or project in charge',
@@ -15,6 +15,7 @@ const STATUS_LABELS = {
   partly_fulfilled: 'Partly fulfilled',
   fulfilled: 'Fulfilled',
 };
+
 const STATUS_CLASSES = {
   pending: 'text-bg-warning',
   approved: 'text-bg-success',
@@ -24,27 +25,43 @@ const STATUS_CLASSES = {
   fulfilled: 'text-bg-success',
 };
 
-// Builds an element without innerHTML, so text from the database can never run as code.
+// Builds DOM elements without innerHTML to prevent script injection.
 function h(tag, props, ...children) {
   const el = document.createElement(tag);
   for (const [key, value] of Object.entries(props || {})) {
-    if (value === false || value == null) continue;
-    if (key === 'class') el.className = value;
-    else if (key.startsWith('on') && typeof value === 'function') el.addEventListener(key.slice(2), value);
-    else if (key in el) el[key] = value;
-    else el.setAttribute(key, value);
+    if (value === false || value == null) {
+      continue;
+    }
+    if (key === 'class') {
+      el.className = value;
+    } else if (key.startsWith('on') && typeof value === 'function') {
+      el.addEventListener(key.slice(2), value);
+    } else if (key in el) {
+      el[key] = value;
+    } else {
+      el.setAttribute(key, value);
+    }
   }
   for (const child of children.flat()) {
-    if (child == null || child === false) continue;
-    el.append(child instanceof Node ? child : document.createTextNode(String(child)));
+    if (child == null || child === false) {
+      continue;
+    }
+    if (child instanceof Node) {
+      el.append(child);
+    } else {
+      el.append(document.createTextNode(String(child)));
+    }
   }
   return el;
 }
 
-async function api(path, { method = 'GET', body } = {}) {
+async function api(path, options = {}) {
+  const method = options.method || 'GET';
+  const body = options.body;
+  const headers = body ? { 'Content-Type': 'application/json' } : {};
   const res = await fetch(path, {
     method,
-    headers: body ? { 'Content-Type': 'application/json' } : {},
+    headers,
     body: body ? JSON.stringify(body) : undefined,
   });
   if (res.status === 401) {
@@ -52,8 +69,15 @@ async function api(path, { method = 'GET', body } = {}) {
     throw new Error('Please log in.');
   }
   let data = null;
-  try { data = await res.json(); } catch { /* no body */ }
-  if (!res.ok) throw new Error((data && data.error) || 'Something went wrong.');
+  try {
+    data = await res.json();
+  } catch {
+    // Response had no JSON body.
+  }
+  if (!res.ok) {
+    const message = (data && data.error) || 'Something went wrong.';
+    throw new Error(message);
+  }
   return data;
 }
 
@@ -62,15 +86,13 @@ async function logout() {
   location.href = '/';
 }
 
-// The red number on the Notifications button in the top bar (created in startPage).
 let bellBadge = null;
 
-// Call first on every page. Sends the person back if their role may not open the page.
+// Sets up top navigation bar and verifies user permissions.
 async function startPage(allowedRoles) {
   const user = await api('/api/me');
   if (allowedRoles && !allowedRoles.includes(user.role)) {
     location.href = '/app.html';
-    // This never finishes, so the rest of the page's code does not run while the browser leaves.
     return new Promise(() => {});
   }
   const bar = document.getElementById('topbar');
@@ -90,13 +112,14 @@ async function startPage(allowedRoles) {
   return user;
 }
 
-// Asks the server how many notifications are unread and shows that number in the top bar.
 async function refreshBell() {
   try {
     const { unread } = await api('/api/notifications/count');
     bellBadge.textContent = unread;
     bellBadge.hidden = unread === 0;
-  } catch { /* the bell is not worth an error message */ }
+  } catch {
+    // Ignore notification count refresh errors silently.
+  }
 }
 
 function statusBadge(status) {
@@ -108,7 +131,10 @@ function qty(n) {
 }
 
 function sentence(text) {
-  return text ? text.charAt(0).toUpperCase() + text.slice(1) : '';
+  if (!text) {
+    return '';
+  }
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 function todayLocal() {
@@ -122,14 +148,20 @@ function showError(box, message) {
   box.hidden = !message;
 }
 
-// Issuance slip statuses have their own labels and colours.
-const SLIP_LABELS = { prepared: 'Prepared', released: 'Released', acknowledged: 'Received', cancelled: 'Cancelled' };
+const SLIP_LABELS = {
+  prepared: 'Prepared',
+  released: 'Released',
+  acknowledged: 'Received',
+  cancelled: 'Cancelled',
+};
+
 const SLIP_CLASSES = {
   prepared: 'text-bg-warning',
   released: 'text-bg-info',
   acknowledged: 'text-bg-success',
   cancelled: 'text-bg-secondary',
 };
+
 function slipBadge(status) {
   return h('span', { class: `badge ${SLIP_CLASSES[status] || 'text-bg-light'}` }, SLIP_LABELS[status] || status);
 }

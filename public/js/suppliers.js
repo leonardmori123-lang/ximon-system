@@ -1,3 +1,4 @@
+// Supplier management and item catalog pricing.
 const rows = document.getElementById('rows');
 const empty = document.getElementById('empty');
 const errorBox = document.getElementById('error');
@@ -5,7 +6,10 @@ const form = document.getElementById('supplier-form');
 const formError = document.getElementById('form-error');
 const pricesSection = document.getElementById('prices');
 const priceRows = document.getElementById('price-rows');
-const field = (id) => document.getElementById(id);
+
+function field(id) {
+  return document.getElementById(id);
+}
 
 let suppliers = [];
 let editingId = null;
@@ -61,8 +65,9 @@ form.addEventListener('submit', async (event) => {
     isActive: field('f-active').checked,
   };
   try {
-    await api(editingId ? `/api/purchasing/suppliers/${editingId}` : '/api/purchasing/suppliers',
-      { method: editingId ? 'PUT' : 'POST', body });
+    const url = editingId ? `/api/purchasing/suppliers/${editingId}` : '/api/purchasing/suppliers';
+    const method = editingId ? 'PUT' : 'POST';
+    await api(url, { method, body });
     closeForm();
     await load();
   } catch (err) {
@@ -70,7 +75,6 @@ form.addEventListener('submit', async (event) => {
   }
 });
 
-// One price row: a box for the peso amount and its own Save button.
 function priceRow(supplierId, price) {
   const input = h('input', {
     class: 'form-control form-control-sm num', inputMode: 'decimal', autocomplete: 'off',
@@ -78,11 +82,19 @@ function priceRow(supplierId, price) {
     placeholder: 'No price yet', 'aria-label': `Price of ${price.Code}`,
   });
   const note = h('span', { class: 'hint ms-2' });
+
   async function save() {
     const centavos = toCentavos(input.value);
-    if (centavos === null) { note.textContent = PRICE_ERROR; note.className = 'status-bad small ms-2'; return; }
+    if (centavos === null) {
+      note.textContent = PRICE_ERROR;
+      note.className = 'status-bad small ms-2';
+      return;
+    }
     try {
-      await api(`/api/purchasing/suppliers/${supplierId}/prices/${price.ItemId}`, { method: 'PUT', body: { unitPriceCentavos: centavos } });
+      await api(`/api/purchasing/suppliers/${supplierId}/prices/${price.ItemId}`, {
+        method: 'PUT',
+        body: { unitPriceCentavos: centavos },
+      });
       input.value = pesosPlain(centavos);
       note.textContent = 'Saved';
       note.className = 'status-ok small ms-2';
@@ -92,7 +104,13 @@ function priceRow(supplierId, price) {
       note.className = 'status-bad small ms-2';
     }
   }
-  input.addEventListener('keydown', (event) => { if (event.key === 'Enter') save(); });
+
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      save();
+    }
+  });
+
   return h('tr', null,
     h('td', null, h('strong', null, price.Code)),
     h('td', null, price.Description),
@@ -115,12 +133,13 @@ async function showPrices(supplierId) {
   }
 }
 
-// The "Items priced" column follows the saves, without losing what is typed in the price boxes.
 async function refreshCounts() {
   try {
     suppliers = await api('/api/purchasing/suppliers');
     render();
-  } catch { /* the next full load will show it */ }
+  } catch {
+    // Leave current display if count refresh fails.
+  }
 }
 
 async function load() {
@@ -128,7 +147,9 @@ async function load() {
   try {
     suppliers = await api('/api/purchasing/suppliers');
     render();
-    if (pricedSupplierId && !suppliers.some((s) => s.SupplierId === pricedSupplierId)) pricesSection.hidden = true;
+    if (pricedSupplierId && !suppliers.some((s) => s.SupplierId === pricedSupplierId)) {
+      pricesSection.hidden = true;
+    }
   } catch (err) {
     showError(errorBox, err.message);
   }

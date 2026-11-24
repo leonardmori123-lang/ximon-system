@@ -1,17 +1,25 @@
+// Construction project management and material budget tracking.
 const rows = document.getElementById('rows');
 const empty = document.getElementById('empty');
 const errorBox = document.getElementById('error');
 const form = document.getElementById('project-form');
 const formError = document.getElementById('form-error');
 const modal = new bootstrap.Modal(document.getElementById('project-modal'));
-const field = (id) => document.getElementById(id);
+
+function field(id) {
+  return document.getElementById(id);
+}
 
 let editingId = null;
 let editingCode = '';
 
 function leftCell(p) {
-  if (p.LeftCentavos === null) return h('td', { class: 'num text-muted' }, '-');
-  if (p.LeftCentavos < 0) return h('td', { class: 'num status-bad' }, pesos(p.LeftCentavos), h('span', { class: 'badge text-bg-danger ms-2' }, 'Over'));
+  if (p.LeftCentavos === null) {
+    return h('td', { class: 'num text-muted' }, '-');
+  }
+  if (p.LeftCentavos < 0) {
+    return h('td', { class: 'num status-bad' }, pesos(p.LeftCentavos), h('span', { class: 'badge text-bg-danger ms-2' }, 'Over'));
+  }
   return h('td', { class: 'num' }, pesos(p.LeftCentavos));
 }
 
@@ -35,7 +43,7 @@ function openForm(project) {
   editingCode = project ? project.Code : '';
   document.getElementById('modal-title').textContent = project ? `Edit ${project.Code}` : 'Add project';
   field('f-code').value = project ? project.Code : '';
-  field('f-code').disabled = Boolean(project); // the code never changes once documents use it
+  field('f-code').disabled = Boolean(project);
   field('f-name').value = project ? project.Name : '';
   field('f-budget').value = project && project.MaterialBudgetCentavos > 0 ? pesosPlain(project.MaterialBudgetCentavos) : '';
   field('f-status').value = project ? project.Status : 'active';
@@ -49,12 +57,20 @@ form.addEventListener('submit', async (event) => {
   event.preventDefault();
   showError(formError, '');
   const budget = toBudgetCentavos(field('f-budget').value);
-  if (budget === null) { showError(formError, 'Enter the material budget in pesos with at most 2 decimals, or leave it empty.'); return; }
+  if (budget === null) {
+    showError(formError, 'Enter the material budget in pesos with at most 2 decimals, or leave it empty.');
+    return;
+  }
   const body = { name: field('f-name').value, materialBudgetCentavos: budget };
-  if (editingId) body.status = field('f-status').value;
-  else body.code = field('f-code').value;
+  if (editingId) {
+    body.status = field('f-status').value;
+  } else {
+    body.code = field('f-code').value;
+  }
   try {
-    await api(editingId ? `/api/projects/${editingId}` : '/api/projects', { method: editingId ? 'PUT' : 'POST', body });
+    const url = editingId ? `/api/projects/${editingId}` : '/api/projects';
+    const method = editingId ? 'PUT' : 'POST';
+    await api(url, { method, body });
     modal.hide();
     await load();
   } catch (err) {
@@ -62,13 +78,15 @@ form.addEventListener('submit', async (event) => {
   }
 });
 
-// An old message stays on screen until the next Save, so clear it as soon as the owner changes the form.
 form.addEventListener('input', () => showError(formError, ''));
 
-// Delete for good. The server refuses while any document uses the project, and says so in the form.
 async function deleteProject() {
-  if (!editingId) return;
-  if (!window.confirm(`Delete ${editingCode} for good? This cannot be undone.`)) return;
+  if (!editingId) {
+    return;
+  }
+  if (!window.confirm(`Delete ${editingCode} for good? This cannot be undone.`)) {
+    return;
+  }
   showError(formError, '');
   try {
     await api(`/api/projects/${editingId}`, { method: 'DELETE' });

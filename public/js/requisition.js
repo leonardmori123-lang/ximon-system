@@ -1,3 +1,4 @@
+// Requisition form detail view, approval, return, and cancellation.
 const content = document.getElementById('content');
 const errorBox = document.getElementById('error');
 const id = new URLSearchParams(location.search).get('id');
@@ -12,8 +13,12 @@ function info(rf) {
     ['Urgency', sentence(rf.Urgency)],
     ['Purpose', rf.Purpose],
   ];
-  if (rf.ReturnReason) pairs.push(['Last return reason', rf.ReturnReason]);
-  if (rf.RevisionCount > 0) pairs.push(['Revisions', String(rf.RevisionCount)]);
+  if (rf.ReturnReason) {
+    pairs.push(['Last return reason', rf.ReturnReason]);
+  }
+  if (rf.RevisionCount > 0) {
+    pairs.push(['Revisions', String(rf.RevisionCount)]);
+  }
   return h('dl', { class: 'info-grid' }, pairs.flatMap(([k, v]) => [h('dt', null, k), h('dd', null, v)]));
 }
 
@@ -36,23 +41,30 @@ function linesTable(rf) {
 }
 
 function stockNote(rf) {
-  if (!STOCK_STATUSES.includes(rf.Status)) return null;
-  if (rf.Status === 'fulfilled') return h('p', { class: 'hint mt-2 mb-0' }, 'All items were issued. This requisition is closed.');
+  if (!STOCK_STATUSES.includes(rf.Status)) {
+    return null;
+  }
+  if (rf.Status === 'fulfilled') {
+    return h('p', { class: 'hint mt-2 mb-0' }, 'All items were issued. This requisition is closed.');
+  }
   const short = rf.lines.filter((l) => Number(l.QtyShort) > 0).length;
-  if (short === 0) return h('p', { class: 'hint mt-2 mb-0' }, 'All items are reserved for this project.');
-  // A purchase requisition already exists, so the Document Trail shows its number and status instead.
-  if (rf.purchaseRequisitions.length > 0) return null;
+  if (short === 0) {
+    return h('p', { class: 'hint mt-2 mb-0' }, 'All items are reserved for this project.');
+  }
+  if (rf.purchaseRequisitions.length > 0) {
+    return null;
+  }
   const itemWords = short === 1 ? '1 item is' : `${short} items are`;
   return h('p', { class: 'hint mt-2 mb-0' }, `${itemWords} short of stock. A purchase requisition is needed for the shortage.`);
 }
 
-// Labels and colours for the purchase requisition (PR) and purchase order (PO) statuses.
 const PR_STATUSES = {
   pending: { label: 'Pending approval', color: 'text-bg-warning' },
   approved: { label: 'Approved', color: 'text-bg-success' },
   on_hold: { label: 'On hold', color: 'text-bg-info' },
   cancelled: { label: 'Cancelled', color: 'text-bg-secondary' },
 };
+
 const PO_STATUSES = {
   open: { label: 'Open', color: 'text-bg-primary' },
   partly_delivered: { label: 'Partly delivered', color: 'text-bg-warning' },
@@ -64,10 +76,10 @@ function documentStatus(statuses, status) {
   return h('span', { class: `badge ${known.color}` }, known.label);
 }
 
-// The documents made because of this RF: its purchase requisitions and the purchase orders made from them.
-// There are no PR or PO pages yet, so the numbers are plain text. Make them links when those pages exist.
 function documentTrail(rf) {
-  if (rf.purchaseRequisitions.length === 0 && rf.purchaseOrders.length === 0) return null;
+  if (rf.purchaseRequisitions.length === 0 && rf.purchaseOrders.length === 0) {
+    return null;
+  }
   const rows = [];
   for (const pr of rf.purchaseRequisitions) {
     rows.push(h('tr', null,
@@ -86,7 +98,9 @@ function documentTrail(rf) {
 }
 
 function slipsPanel(rf) {
-  if (!rf.slips || !rf.slips.length) return null;
+  if (!rf.slips || !rf.slips.length) {
+    return null;
+  }
   return h('div', null,
     h('h2', { class: 'h6 mt-4' }, 'Issuance slips'),
     h('div', { class: 'panel table-responsive' },
@@ -112,13 +126,15 @@ function historyTable(rf) {
 }
 
 async function act(path, body, confirmText) {
-  if (confirmText && !window.confirm(confirmText)) return;
+  if (confirmText && !window.confirm(confirmText)) {
+    return;
+  }
   try {
     await api(`/api/requisitions/${id}/${path}`, { method: 'POST', body });
     await load();
   } catch (err) {
     showError(errorBox, err.message);
-    errorBox.scrollIntoView({ block: 'nearest' }); // the buttons are far down the page
+    errorBox.scrollIntoView({ block: 'nearest' });
   }
 }
 
@@ -169,7 +185,6 @@ async function load() {
   showError(errorBox, '');
   try {
     const rf = await api(`/api/requisitions/${encodeURIComponent(id)}`);
-    // filter(Boolean): replaceChildren would print the word "null" for a missing block
     content.replaceChildren(...[
       h('div', { class: 'd-flex align-items-center gap-3 mb-3' }, h('h1', { class: 'h5 mb-0' }, rf.RfNumber), statusBadge(rf.Status)),
       h('div', { class: 'panel p-3' }, info(rf)),
@@ -188,7 +203,10 @@ async function load() {
 
 async function start() {
   user = await startPage(['owner', 'foreman']);
-  if (!id) { showError(errorBox, 'No requisition chosen.'); return; }
+  if (!id) {
+    showError(errorBox, 'No requisition chosen.');
+    return;
+  }
   await load();
 }
 

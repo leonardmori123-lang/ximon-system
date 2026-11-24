@@ -1,3 +1,4 @@
+// Purchase requisitions list with status filtering.
 const rows = document.getElementById('rows');
 const empty = document.getElementById('empty');
 const errorBox = document.getElementById('error');
@@ -7,7 +8,8 @@ async function load() {
   showError(errorBox, '');
   const status = statusSelect.value;
   try {
-    const list = await api(status ? `/api/purchasing/prs?status=${encodeURIComponent(status)}` : '/api/purchasing/prs');
+    const url = status ? `/api/purchasing/prs?status=${encodeURIComponent(status)}` : '/api/purchasing/prs';
+    const list = await api(url);
     rows.replaceChildren(...list.map((p) => h('tr', null,
       h('td', null, h('a', { href: `/pr.html?id=${p.PurchaseRequisitionId}` }, p.PrNumber)),
       h('td', null, p.RfNumber || '', p.RfStatus === 'cancelled' ? h('span', { class: 'badge text-bg-secondary ms-1' }, 'RF cancelled') : null),

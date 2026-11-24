@@ -1,19 +1,30 @@
+// Issuance slip detail view, release, and receipt acknowledgment.
 const content = document.getElementById('content');
 const errorBox = document.getElementById('error');
 const id = new URLSearchParams(location.search).get('id');
 let user;
 
 function info(s) {
+  let reqCell = s.RfNumber;
+  if (user.role !== 'custodian') {
+    reqCell = h('a', { href: `/requisition.html?id=${s.RequisitionId}` }, s.RfNumber);
+  }
   const pairs = [
-    ['Requisition', user.role === 'custodian' ? s.RfNumber : h('a', { href: `/requisition.html?id=${s.RequisitionId}` }, s.RfNumber)],
+    ['Requisition', reqCell],
     ['Project', `${s.ProjectCode}, ${s.ProjectName}`],
     ['Requested by', s.RequestedByName],
     ['Purpose', s.Purpose],
     ['Prepared', `${s.PreparedAt} by ${s.PreparedByName}`],
   ];
-  if (s.ReleasedAt) pairs.push(['Released', `${s.ReleasedAt} by ${s.ReleasedByName}`]);
-  if (s.AcknowledgedAt) pairs.push(['Received', `${s.AcknowledgedAt} by ${s.AcknowledgedByName}`]);
-  if (s.Remarks) pairs.push(['Remarks', s.Remarks]);
+  if (s.ReleasedAt) {
+    pairs.push(['Released', `${s.ReleasedAt} by ${s.ReleasedByName}`]);
+  }
+  if (s.AcknowledgedAt) {
+    pairs.push(['Received', `${s.AcknowledgedAt} by ${s.AcknowledgedByName}`]);
+  }
+  if (s.Remarks) {
+    pairs.push(['Remarks', s.Remarks]);
+  }
   return h('dl', { class: 'info-grid' }, pairs.flatMap(([k, v]) => [h('dt', null, k), h('dd', null, v)]));
 }
 
@@ -31,14 +42,23 @@ function historyTable(s) {
     h('div', { class: 'panel table-responsive' },
       h('table', { class: 'table mb-0' },
         h('thead', null, h('tr', null, h('th', null, 'When'), h('th', null, 'Who'), h('th', null, 'Change'), h('th', null, 'Remarks'))),
-        h('tbody', null, s.history.map((e) => h('tr', null,
-          h('td', null, e.ChangedAt), h('td', null, e.ChangedByName),
-          h('td', null, e.FromStatus ? `${SLIP_LABELS[e.FromStatus]} to ${SLIP_LABELS[e.ToStatus]}` : `Prepared`),
-          h('td', null, e.Reason || '')))))));
+        h('tbody', null, s.history.map((e) => {
+          let changeText = 'Prepared';
+          if (e.FromStatus) {
+            changeText = `${SLIP_LABELS[e.FromStatus]} to ${SLIP_LABELS[e.ToStatus]}`;
+          }
+          return h('tr', null,
+            h('td', null, e.ChangedAt),
+            h('td', null, e.ChangedByName),
+            h('td', null, changeText),
+            h('td', null, e.Reason || ''));
+        })))));
 }
 
 async function act(path, body, confirmText) {
-  if (confirmText && !window.confirm(confirmText)) return;
+  if (confirmText && !window.confirm(confirmText)) {
+    return;
+  }
   try {
     await api(`/api/slips/${id}/${path}`, { method: 'POST', body });
     await load();
@@ -64,7 +84,9 @@ function actions(s) {
     const sure = h('input', { class: 'form-check-input', type: 'checkbox', id: 'sure' });
     const button = h('button', { class: 'btn btn-ximon', type: 'button', disabled: true,
       onclick: () => act('acknowledge', { remarks: remarks.value }) }, 'Confirm receipt');
-    sure.addEventListener('change', () => { button.disabled = !sure.checked; });
+    sure.addEventListener('change', () => {
+      button.disabled = !sure.checked;
+    });
     return h('div', { class: 'panel p-3 mt-4' },
       h('p', { class: 'mb-3' }, 'Check the items you received against this slip, then confirm.'),
       h('div', { class: 'mb-3' }, remarks),
@@ -94,7 +116,10 @@ async function load() {
 
 async function start() {
   user = await startPage(['owner', 'custodian', 'foreman']);
-  if (!id) { showError(errorBox, 'No slip chosen.'); return; }
+  if (!id) {
+    showError(errorBox, 'No slip chosen.');
+    return;
+  }
   await load();
 }
 

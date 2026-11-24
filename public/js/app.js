@@ -1,4 +1,4 @@
-// Each screen a role may open. When a module builds a screen, set its href.
+// Home screen and role-based navigation dashboard.
 const ROLE_SCREENS = {
   owner: [
     { label: 'Approve or return requisitions', href: '/requisitions.html' },
@@ -32,20 +32,30 @@ const ROLE_SCREENS = {
 };
 
 function screenRow(screen) {
-  const row = h(screen.href ? 'a' : 'div', { class: 'screen-item', href: screen.href }, h('span', null, screen.label));
-  if (!screen.href) row.append(h('span', { class: 'note' }, 'Not built yet'));
+  const tagName = screen.href ? 'a' : 'div';
+  const row = h(tagName, { class: 'screen-item', href: screen.href }, h('span', null, screen.label));
+  if (!screen.href) {
+    row.append(h('span', { class: 'note' }, 'Not built yet'));
+  }
   return row;
 }
 
 async function start() {
   const user = await startPage();
-  document.getElementById('screens').append(...(ROLE_SCREENS[user.role] || []).map(screenRow));
+  const allowed = ROLE_SCREENS[user.role] || [];
+  document.getElementById('screens').append(...allowed.map(screenRow));
 
   const health = document.getElementById('health');
   try {
-    const data = await fetch('/api/health').then((res) => res.json());
-    health.textContent = data.ok ? `Database connected: ${data.database}` : `Database problem: ${data.error}`;
-    health.className = `small mb-0 ${data.ok ? 'status-ok' : 'status-bad'}`;
+    const res = await fetch('/api/health');
+    const data = await res.json();
+    if (data.ok) {
+      health.textContent = `Database connected: ${data.database}`;
+      health.className = 'small mb-0 status-ok';
+    } else {
+      health.textContent = `Database problem: ${data.error}`;
+      health.className = 'small mb-0 status-bad';
+    }
   } catch {
     health.textContent = 'Cannot reach the server.';
     health.className = 'small mb-0 status-bad';

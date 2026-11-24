@@ -1,3 +1,4 @@
+// Issuance slips list and releasable requisitions view.
 const errorBox = document.getElementById('error');
 const statusSelect = document.getElementById('status');
 let user;
@@ -24,7 +25,8 @@ async function prepare(requisitionId) {
 
 async function loadSlips() {
   const status = statusSelect.value;
-  const list = await api(status ? `/api/slips?status=${encodeURIComponent(status)}` : '/api/slips');
+  const url = status ? `/api/slips?status=${encodeURIComponent(status)}` : '/api/slips';
+  const list = await api(url);
   document.getElementById('rows').replaceChildren(...list.map((s) => h('tr', null,
     h('td', null, h('a', { href: `/slip.html?id=${s.SlipId}` }, s.SlipNumber)),
     h('td', null, s.RfNumber), h('td', null, s.ProjectCode), h('td', null, s.RequestedByName),
@@ -35,7 +37,9 @@ async function loadSlips() {
 async function load() {
   showError(errorBox, '');
   try {
-    if (user.role === 'custodian') await loadReady();
+    if (user.role === 'custodian') {
+      await loadReady();
+    }
     await loadSlips();
   } catch (err) {
     showError(errorBox, err.message);

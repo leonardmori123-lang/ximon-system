@@ -1,3 +1,4 @@
+// Inventory item list, creation, editing, and stock count adjustments.
 const rows = document.getElementById('rows');
 const search = document.getElementById('search');
 const empty = document.getElementById('empty');
@@ -8,7 +9,10 @@ const lowOnly = document.getElementById('low-only');
 const adjustForm = document.getElementById('adjust-form');
 const adjustError = document.getElementById('adjust-error');
 const adjustModal = new bootstrap.Modal(document.getElementById('adjust-modal'));
-const field = (id) => document.getElementById(id);
+
+function field(id) {
+  return document.getElementById(id);
+}
 
 let items = [];
 let canEdit = false;
@@ -18,11 +22,17 @@ let adjustingId = null;
 
 function render() {
   const text = search.value.trim().toLowerCase();
-  const shown = items.filter((i) => `${i.Code} ${i.Description} ${i.Location || ''}`.toLowerCase().includes(text)
-    && (!lowOnly.checked || i.IsLow));
+  const shown = items.filter((i) => {
+    const matchText = `${i.Code} ${i.Description} ${i.Location || ''}`.toLowerCase().includes(text);
+    const matchLow = !lowOnly.checked || i.IsLow;
+    return matchText && matchLow;
+  });
+
   rows.replaceChildren(...shown.map((i) => {
     const row = h('tr', { class: i.IsActive ? '' : 'text-muted' },
-      h('td', null, h('strong', null, i.Code), i.IsTool ? h('span', { class: 'badge text-bg-light ms-2' }, 'tool') : null,
+      h('td', null,
+        h('strong', null, i.Code),
+        i.IsTool ? h('span', { class: 'badge text-bg-light ms-2' }, 'tool') : null,
         i.IsActive ? null : h('span', { class: 'badge text-bg-secondary ms-2' }, 'inactive'),
         i.IsLow ? h('span', { class: 'badge text-bg-danger ms-2' }, 'Low') : null),
       h('td', null, i.Description),
@@ -45,7 +55,7 @@ function openForm(item) {
   editingId = item ? item.ItemId : null;
   document.getElementById('modal-title').textContent = item ? `Edit ${item.Code}` : 'Add item';
   field('f-code').value = item ? item.Code : '';
-  field('f-code').disabled = Boolean(item); // the code never changes once documents use it
+  field('f-code').disabled = Boolean(item);
   field('f-description').value = item ? item.Description : '';
   field('f-unit').value = item ? item.Unit : '';
   field('f-location').value = item ? item.Location || '' : '';
@@ -72,7 +82,9 @@ form.addEventListener('submit', async (event) => {
     isActive: field('f-active').checked,
   };
   try {
-    await api(editingId ? `/api/items/${editingId}` : '/api/items', { method: editingId ? 'PUT' : 'POST', body });
+    const url = editingId ? `/api/items/${editingId}` : '/api/items';
+    const method = editingId ? 'PUT' : 'POST';
+    await api(url, { method, body });
     modal.hide();
     await load();
   } catch (err) {
@@ -80,7 +92,6 @@ form.addEventListener('submit', async (event) => {
   }
 });
 
-// The custodian fixes a wrong count: he types what he counted, and the server works out the difference.
 function openAdjust(item) {
   adjustingId = item.ItemId;
   document.getElementById('adjust-code').textContent = item.Code;
@@ -97,12 +108,15 @@ adjustForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   showError(adjustError, '');
   const counted = field('a-counted').value;
-  if (counted.trim() === '') { // an empty box must not be read as a count of zero
+  if (counted.trim() === '') {
     showError(adjustError, 'Enter the counted quantity.');
     return;
   }
   try {
-    await api(`/api/items/${adjustingId}/adjust`, { method: 'POST', body: { counted: Number(counted), reason: field('a-reason').value } });
+    await api(`/api/items/${adjustingId}/adjust`, {
+      method: 'POST',
+      body: { counted: Number(counted), reason: field('a-reason').value },
+    });
     adjustModal.hide();
     await load();
   } catch (err) {

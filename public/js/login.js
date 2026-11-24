@@ -1,8 +1,12 @@
+// User login page handling authentication requests.
 const form = document.getElementById('login-form');
 const errorBox = document.getElementById('error');
 
-// Already logged in? Go straight to the app.
-fetch('/api/me').then((res) => { if (res.ok) location.href = '/app.html'; });
+fetch('/api/me').then((res) => {
+  if (res.ok) {
+    location.href = '/app.html';
+  }
+});
 
 form.addEventListener('submit', async (event) => {
   event.preventDefault();

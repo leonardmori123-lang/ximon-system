@@ -1,13 +1,20 @@
+// Purchase order detail view and history.
 const content = document.getElementById('content');
 const errorBox = document.getElementById('error');
 const params = new URLSearchParams(location.search);
 const id = params.get('id');
-// The delivery verifier sees the PO without money, cannot open the PR or the print view.
 let isVerifier = false;
 
 function info(po) {
   const supplierDetails = [po.SupplierContact, po.SupplierPhone, po.SupplierEmail, po.SupplierAddress].filter(Boolean).join(', ');
-  const prCell = !po.PrNumber ? 'None' : isVerifier ? po.PrNumber : h('a', { href: `/pr.html?id=${po.PurchaseRequisitionId}` }, po.PrNumber);
+  let prCell = 'None';
+  if (po.PrNumber) {
+    if (isVerifier) {
+      prCell = po.PrNumber;
+    } else {
+      prCell = h('a', { href: `/pr.html?id=${po.PurchaseRequisitionId}` }, po.PrNumber);
+    }
+  }
   const pairs = [
     ['Purchase requisition', prCell],
     ['Supplier', po.SupplierName],
@@ -21,11 +28,15 @@ function info(po) {
   return h('dl', { class: 'info-grid' }, pairs.flatMap(([k, v]) => [h('dt', null, k), h('dd', null, v)]));
 }
 
-// The lines, then the totals laid out like the client's PO: subtotal, discount, other discounts, shipping, total.
 function linesTable(po) {
-  const totalRow = (label, value, bold) => h('tr', null,
-    h(bold ? 'th' : 'td', { colSpan: 6, class: 'text-end' }, label),
-    h(bold ? 'th' : 'td', { class: 'num' }, value));
+  function totalRow(label, value, bold) {
+    const tagName = bold ? 'th' : 'td';
+    return h('tr', null,
+      h(tagName, { colSpan: 6, class: 'text-end' }, label),
+      h(tagName, { class: 'num' }, value)
+    );
+  }
+
   return h('div', { class: 'panel table-responsive mt-4' },
     h('table', { class: 'table mb-0' },
       h('thead', null, h('tr', null,
@@ -52,10 +63,17 @@ function historyTable(po) {
     h('div', { class: 'panel table-responsive' },
       h('table', { class: 'table mb-0' },
         h('thead', null, h('tr', null, h('th', null, 'When'), h('th', null, 'Who'), h('th', null, 'Change'))),
-        h('tbody', null, po.history.map((e) => h('tr', null,
-          h('td', null, e.ChangedAt),
-          h('td', null, e.ChangedByName),
-          h('td', null, e.FromStatus ? `${PO_LABELS[e.FromStatus]} to ${PO_LABELS[e.ToStatus]}` : `Made as ${PO_LABELS[e.ToStatus].toLowerCase()}`)))))));
+        h('tbody', null, po.history.map((e) => {
+          let changeText = `Made as ${PO_LABELS[e.ToStatus].toLowerCase()}`;
+          if (e.FromStatus) {
+            changeText = `${PO_LABELS[e.FromStatus]} to ${PO_LABELS[e.ToStatus]}`;
+          }
+          return h('tr', null,
+            h('td', null, e.ChangedAt),
+            h('td', null, e.ChangedByName),
+            h('td', null, changeText)
+          );
+        })))));
 }
 
 async function load() {
@@ -80,7 +98,10 @@ async function load() {
 async function start() {
   const user = await startPage(['purchaser', 'owner', 'verifier']);
   isVerifier = user.role === 'verifier';
-  if (!id) { showError(errorBox, 'No purchase order chosen.'); return; }
+  if (!id) {
+    showError(errorBox, 'No purchase order chosen.');
+    return;
+  }
   await load();
 }
 
