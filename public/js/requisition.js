@@ -76,6 +76,7 @@ function documentStatus(statuses, status) {
   return h('span', { class: `badge ${known.color}` }, known.label);
 }
 
+// The numbers are plain text on purpose: the foreman cannot open the PR and PO pages.
 function documentTrail(rf) {
   if (rf.purchaseRequisitions.length === 0 && rf.purchaseOrders.length === 0) {
     return null;

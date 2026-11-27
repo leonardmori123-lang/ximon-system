@@ -17,7 +17,7 @@ Browser pages (Bootstrap) call a Node.js + Express server, and the server reads 
 
 Test users (password is `SEED_PASSWORD` from `.env`, default `ximon123`): `owner1`, `foreman1`, `custodian1`, `purchaser1`, `verifier1`.
 
-`npm test` runs all the tests. They use a throw-away database in memory, so your real data is never touched.
+`npm test` runs all the tests. They use a throw-away database in memory, so your real data is never touched. `tests/invariants.test.js` is a stress test: it runs about 2,000 random operations (file, approve, return, revise, cancel, slips, deliveries, adjustments, PRs, POs) in a random order, and after every single step checks that the stock and document rules still hold (stock log adds up to On hand, reserved matches what the requisition lines promise, no negative stock, one open slip per RF, PO status matches what was received). A failure prints the seed, the step and the last operations, so it can be repeated.
 
 ## The database
 
@@ -61,6 +61,14 @@ Test users (password is `SEED_PASSWORD` from `.env`, default `ximon123`): `owner
 - `receiveStock({ itemId, quantity, sourceDocument: { type, id, number }, projectId, userId })` in `server/services/receipts.js`: called by Delivery for each received line. Adds the units to Item.OnHand and logs a receipt.
 - `allocateToRequisition({ requisitionId, lines: [{ itemId, quantity }], userId })` in `server/services/receipts.js`: called by Delivery once per receiving report when the PR behind the PO has an RF. Sets the units aside for the RF, prepares an issuance slip and notifies the requestor and the custodian. Returns { allocated, slip }. If the RF is no longer approved (for example the owner cancelled it), it sets nothing aside and returns `{ allocated: [], slip: null }`; the received units stay on the shelf as free stock, so Delivery needs no special case.
 
+## Known limitations (left out on purpose, to name when presenting)
+
+- Not built, from the proposal: comparing supplier quotations and the three-quotation rule (the `Quotation` table exists but nothing uses it), small cash buys, the three-way match (PO, receiving report, supplier invoice), a separate backup approver (any user with the owner role can approve, but there is no screen to add users), the tools log and returning leftovers to stock, photos, late-delivery alerts, and a low-stock notification (the Item list shows the Low badge and filter only).
+- Cost is not charged to the project when items are issued, because items have no cost. The budget check counts approved purchase requisitions and purchase orders only (see the budget rule above).
+- A requisition that is partly fulfilled or fulfilled cannot be cancelled. The rest of a partly fulfilled requisition stays open until the missing items are delivered.
+- There is no change-password screen. The test users keep the password from `SEED_PASSWORD` until someone changes it in the database.
+- Sessions are kept in memory, so restarting the server logs everyone out. The app has been tried on a PC only, not on a phone.
+
 ## Change log
 
 | Date | Who asked | Module | Change |
@@ -77,3 +85,4 @@ Test users (password is `SEED_PASSWORD` from `.env`, default `ximon123`): `owner
 | 2026-11-21 | Member A | Purchasing (file `server/routes/projects.js`) | Added owner-only `DELETE /api/projects/:id`. It refuses with a plain message when documents still use the project |
 | 2026-11-22 | Leo | Inventory (batch 3) | Item list: red "Low" badge and "Low stock only" filter. New `isLowStock` in `server/services/stockRules.js`; `listItems` adds `IsLow`. No notification |
 | 2026-11-22 | Leo | Inventory (batch 5) | Stock adjustment for the custodian: `POST /api/items/:id/adjust`, new `server/services/adjustments.js`, an "Adjust" button and modal on the Item list. Logged as an `adjustment` in the stock log. Every active owner is notified (item code, old and new On hand, who counted, reason) in the same transaction |
+| 2026-11-23 | Leo | Final check (Requisition, Inventory, Purchasing) | Added `tests/invariants.test.js` (stress test). Fixed an outdated comment in `public/js/requisition.js`. `server/index.js` warns at start when `SESSION_SECRET` is not set. README: known limitations |

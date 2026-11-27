@@ -52,6 +52,9 @@ app.use((err, req, res, next) => {
 module.exports = app;
 
 if (require.main === module) {
+  if (!process.env.SESSION_SECRET) {
+  console.warn('Warning: SESSION_SECRET is not set in .env, so a built-in secret is used. Set a long random text before real use.');
+  }
   const port = Number(process.env.PORT || 3000);
   app.listen(port, '0.0.0.0', () => {
     console.log(`Ximon system running on http://localhost:${port}`);
