@@ -62,7 +62,7 @@ function pricingForm(pr, suppliers) {
   const inputs = pr.lines.map((l) => h('input', {
     class: 'form-control form-control-sm num', inputMode: 'decimal', autocomplete: 'off',
     value: l.UnitPriceCentavos == null ? '' : pesosPlain(l.UnitPriceCentavos),
-    'aria-label': `Unit price of ${l.Code}`, style: 'max-width: 10rem; margin-left: auto;',
+    'aria-label': `Unit price of ${l.Code}`, style: 'min-width: 7rem; max-width: 10rem; margin-left: auto;',
   }));
   const lineCells = pr.lines.map(() => h('td', { class: 'num' }));
   const formError = h('p', { class: 'status-bad small mt-3 mb-0', role: 'alert', hidden: true });
