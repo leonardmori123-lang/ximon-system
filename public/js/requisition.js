@@ -65,7 +65,7 @@ function documentStatus(statuses, status) {
 }
 
 // The documents made because of this RF: its purchase requisitions and the purchase orders made from them.
-// There are no PR or PO pages yet, so the numbers are plain text. Make them links when those pages exist.
+// The numbers are plain text on purpose: the foreman cannot open the PR and PO pages.
 function documentTrail(rf) {
   if (rf.purchaseRequisitions.length === 0 && rf.purchaseOrders.length === 0) return null;
   const rows = [];
